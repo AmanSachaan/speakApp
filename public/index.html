@@ -3,37 +3,99 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stranger Connect Voice Chat</title>
+    <title>Stranger Voice Connect</title>
     <style>
-        body { font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f9; }
-        h1 { color: #333; text-align: center; }
-        #status { font-weight: bold; margin-bottom: 15px; padding: 10px; border: 1px solid #ccc; background-color: #e0f7fa; border-radius: 4px; text-align: center; font-size: 1.2em; }
-        .controls { text-align: center; margin-top: 20px; }
-        .controls button { padding: 12px 20px; margin: 0 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 1em; font-weight: bold; transition: background-color 0.3s; }
-        #connectButton { background-color: #28a745; color: white; }
-        #connectButton:hover { background-color: #218838; }
-        #disconnectButton { background-color: #dc3545; color: white; }
-        #disconnectButton:disabled { background-color: #f8d7da; color: #721c24; cursor: not-allowed; }
-        #localAudio, #remoteAudio { display: none; } /* Voice chat doesn't need video elements */
-        #log { height: 150px; border: 1px solid #ddd; overflow-y: scroll; padding: 10px; margin-top: 15px; background-color: white; border-radius: 4px; font-size: 0.8em; }
-        .log-message { margin: 2px 0; color: #6c757d; }
+        :root {
+            --primary-color: #007bff;
+            --secondary-color: #6c757d;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --bg-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --text-color: #343a40;
+        }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            max-width: 450px; 
+            margin: 50px auto; 
+            padding: 20px; 
+            background-color: var(--bg-color); 
+            color: var(--text-color);
+            text-align: center;
+        }
+        .container {
+            background-color: var(--card-bg);
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        h1 { 
+            color: var(--primary-color); 
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+        #status { 
+            font-weight: 600; 
+            margin-bottom: 25px; 
+            padding: 15px; 
+            border-radius: 8px; 
+            font-size: 1.1em;
+            background-color: #e9ecef;
+            color: var(--secondary-color);
+        }
+        .controls { 
+            display: flex;
+            justify-content: space-around;
+            gap: 15px;
+        }
+        .controls button { 
+            flex-grow: 1;
+            padding: 15px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 1em; 
+            font-weight: bold; 
+            transition: all 0.3s ease; 
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        #connectButton { 
+            background-color: var(--success-color); 
+            color: white; 
+        }
+        #connectButton:hover { 
+            background-color: #218838; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        #disconnectButton { 
+            background-color: var(--danger-color); 
+            color: white; 
+        }
+        #disconnectButton:disabled { 
+            background-color: #f8d7da; 
+            color: #a0a0a0; 
+            cursor: not-allowed; 
+        }
+        #remoteAudio { 
+            display: none; 
+        }
     </style>
 </head>
 <body>
 
-    <h1>Stranger Voice Connect 🗣️</h1>
+    <div class="container">
+        <h1>Stranger Voice Connect 🎙️</h1>
 
-    <div id="status">Connecting...</div>
+        <div id="status">Press Connect to start.</div>
 
-    <audio id="remoteAudio" autoplay></audio> 
+        <audio id="remoteAudio" autoplay></audio> 
 
-    <div class="controls">
-        <button onclick="connectStranger()" id="connectButton">Connect</button>
-        <button onclick="disconnectStranger()" id="disconnectButton" disabled>Disconnect</button>
+        <div class="controls">
+            <button onclick="connectStranger()" id="connectButton">Connect</button>
+            <button onclick="disconnectStranger()" id="disconnectButton" disabled>Disconnect</button>
+        </div>
     </div>
-
-    <h2>Activity Log</h2>
-    <div id="log"></div>
 
     <script>
         // 🔑 RENDER FIX: Dynamically set the protocol (wss for production/Render, ws for local)
@@ -46,52 +108,61 @@
         let localStream = null;
 
         const statusElement = document.getElementById('status');
-        const logElement = document.getElementById('log');
         const disconnectButton = document.getElementById('disconnectButton');
         const connectButton = document.getElementById('connectButton');
         const remoteAudio = document.getElementById('remoteAudio');
 
         const ICE_SERVERS = {
             iceServers: [
-                // Free STUN server to help discover public IP addresses
                 { urls: 'stun:stun.l.google.com:19302' }, 
             ]
         };
 
-        function logMessage(text, className = 'log-message') {
-            const msgDiv = document.createElement('div');
-            msgDiv.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
-            msgDiv.classList.add(className);
-            logElement.appendChild(msgDiv);
-            logElement.scrollTop = logElement.scrollHeight;
+        function setStatus(text, isError = false) {
+            statusElement.textContent = text;
+            statusElement.style.backgroundColor = isError ? '#f8d7da' : (text.includes('Connected') ? '#d4edda' : '#e9ecef');
+            statusElement.style.color = isError ? '#721c24' : (text.includes('Connected') ? '#155724' : '#6c757d');
         }
 
-        function setControls(isPaired) {
+        function setControls(isPaired, isConnecting = false) {
             disconnectButton.disabled = !isPaired;
             connectButton.textContent = isPaired ? 'Find New Stranger' : 'Connect';
-            connectButton.disabled = false; // Always allow reconnection
+            connectButton.disabled = isConnecting;
         }
 
         // --- WebRTC Logic ---
 
         async function startLocalMedia() {
             try {
+                if (localStream) {
+                    // Stop existing tracks if any to ensure fresh media access on re-connect
+                    localStream.getTracks().forEach(track => track.stop());
+                }
                 // Request microphone access (audio only)
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                logMessage("Microphone access granted.");
-                
-                // You could optionally attach the stream to a local hidden video element for debugging
-                // document.getElementById('localAudio').srcObject = localStream;
                 return true;
             } catch (e) {
-                logMessage(`Error getting media: ${e.name}. Please allow microphone access.`, 'log-error');
-                statusElement.textContent = "Error: Microphone Required";
+                setStatus("Error: Microphone access is required.", true);
+                setControls(false);
                 return false;
             }
         }
 
+        function closePeerConnection() {
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            if (remoteAudio.srcObject) {
+                remoteAudio.srcObject.getTracks().forEach(track => track.stop());
+                remoteAudio.srcObject = null;
+            }
+        }
+        
         function createPeerConnection(isInitiator) {
-            if (peerConnection) closePeerConnection();
+            if (!localStream) return;
+            
+            closePeerConnection(); // Ensure clean start
             
             peerConnection = new RTCPeerConnection(ICE_SERVERS);
 
@@ -99,21 +170,18 @@
             localStream.getTracks().forEach(track => {
                 peerConnection.addTrack(track, localStream);
             });
-            logMessage("Local audio track added to peer connection.");
 
             // 2. Handle remote stream (stranger's voice)
             peerConnection.ontrack = (event) => {
-                logMessage("Received remote audio track.");
                 if (remoteAudio.srcObject !== event.streams[0]) {
                     remoteAudio.srcObject = event.streams[0];
-                    remoteAudio.play().catch(e => logMessage(`Error playing audio: ${e}`, 'log-error'));
+                    remoteAudio.play().catch(e => { /* Error playing audio */ });
                 }
             };
 
             // 3. Handle ICE Candidates (network information)
             peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    // Send ICE Candidate to the stranger via the signaling server
+                if (event.candidate && socket && socket.readyState === WebSocket.OPEN) {
                     socket.send(JSON.stringify({
                         type: 'SIGNAL',
                         signal: { candidate: event.candidate }
@@ -127,91 +195,74 @@
                     try {
                         const offer = await peerConnection.createOffer();
                         await peerConnection.setLocalDescription(offer);
-                        // Send the SDP Offer to the stranger via the signaling server
                         socket.send(JSON.stringify({
                             type: 'SIGNAL',
                             signal: { sdp: peerConnection.localDescription }
                         }));
-                        logMessage("Sent WebRTC Offer to stranger.");
                     } catch (e) {
-                        logMessage(`Error creating offer: ${e}`, 'log-error');
+                        setStatus(`WebRTC Error: Could not create Offer.`, true);
                     }
                 };
             }
-            
-            logMessage("RTCPeerConnection created successfully.");
         }
 
         async function handleSignal(signal) {
             if (!peerConnection) return;
 
             if (signal.sdp) {
-                // Received an Offer or an Answer
                 try {
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-                    logMessage(`Received WebRTC ${signal.sdp.type.toUpperCase()}.`);
 
                     if (signal.sdp.type === 'offer') {
                         // If it's an Offer, create and send an Answer
                         const answer = await peerConnection.createAnswer();
                         await peerConnection.setLocalDescription(answer);
-                        // Send the SDP Answer to the initiator
                         socket.send(JSON.stringify({
                             type: 'SIGNAL',
                             signal: { sdp: peerConnection.localDescription }
                         }));
-                        logMessage("Sent WebRTC Answer to initiator.");
                     }
                 } catch (e) {
-                    logMessage(`Error handling SDP: ${e}`, 'log-error');
+                    setStatus(`WebRTC Error: Could not handle SDP.`, true);
                 }
 
             } else if (signal.candidate) {
-                // Received an ICE Candidate
                 try {
                     await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
-                    logMessage("Added ICE Candidate.");
                 } catch (e) {
-                    logMessage(`Error adding ICE candidate: ${e}`, 'log-error');
+                    // Ignore error if SDP is not yet set
                 }
-            }
-        }
-        
-        function closePeerConnection() {
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-                logMessage("WebRTC connection closed.");
-            }
-            if (remoteAudio.srcObject) {
-                remoteAudio.srcObject.getTracks().forEach(track => track.stop());
-                remoteAudio.srcObject = null;
             }
         }
         
         // --- WebSocket Logic ---
 
         function connectStranger() {
-            if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-                // Send explicit CONNECT signal to tell the server to re-queue/re-pair
+            setControls(false, true); // Disable connect button while connecting
+            closePeerConnection(); // Always close any existing WebRTC connection first
+
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                // Socket is already open, just request a new pairing (CONNECT signal)
                 socket.send(JSON.stringify({ type: 'CONNECT' }));
-                statusElement.textContent = 'Connecting...';
-                logMessage("Requesting new pairing from server...", 'log-message');
-                setControls(false);
-                closePeerConnection(); // Close old peer connection
+                setStatus('Searching for a stranger...');
                 return;
             }
-            
-            statusElement.textContent = 'Connecting to server...';
-            logMessage("Starting WebSocket connection...", 'log-message');
-            setControls(false);
+
+            setStatus('Connecting to server...');
 
             // 1. Establish WebSocket connection
             socket = new WebSocket(websocketUrl); 
 
             socket.onopen = async () => {
-                logMessage("Connection to server established. Waiting for a match.", 'log-message');
-                await startLocalMedia(); // Request microphone on successful server connection
+                const mediaReady = await startLocalMedia();
+                if (mediaReady) {
+                    // Once media is ready, tell the server to start the pairing process.
+                    socket.send(JSON.stringify({ type: 'CONNECT' }));
+                    setStatus('Searching for a stranger...');
+                } else {
+                    // If media fails, we cannot connect
+                    socket.close();
+                }
             };
 
             socket.onmessage = (event) => {
@@ -219,20 +270,14 @@
 
                 switch (data.type) {
                     case 'STATUS':
-                        statusElement.textContent = data.message;
-                        logMessage(`[STATUS] ${data.message}`);
+                        setStatus(data.message);
                         break;
                         
                     case 'PAIR_FOUND':
-                        statusElement.textContent = 'Voice chat connected! Say hello.';
-                        logMessage(data.message);
+                        setStatus('Voice chat connected! Say hello. 💬');
                         setControls(true);
                         // 2. Pair found, now start the WebRTC process
-                        if (localStream) {
-                            createPeerConnection(data.initiator);
-                        } else {
-                             logMessage("Cannot start WebRTC: Microphone access failed.", 'log-error');
-                        }
+                        createPeerConnection(data.initiator);
                         break;
 
                     case 'SIGNAL':
@@ -242,44 +287,42 @@
                         
                     case 'DISCONNECTED':
                         // The partner initiated the disconnection
-                        statusElement.textContent = data.message;
-                        logMessage(`[SYSTEM] ${data.message} Looking for a new partner...`);
+                        setStatus('Partner disconnected. Press Connect to find a new one.');
                         setControls(false); 
                         closePeerConnection(); // Close the WebRTC connection
-                        // The server has already re-queued us
+                        // The server will have re-queued the partner, and left us un-queued.
                         break;
                 }
             };
 
             socket.onclose = () => {
-                statusElement.textContent = 'Disconnected from server.';
-                logMessage("[SYSTEM] Server connection closed.", 'log-message');
+                setStatus('Disconnected from server. Press Connect to start.');
                 setControls(false);
                 closePeerConnection(); 
             };
 
             socket.onerror = (error) => {
-                console.error("WebSocket Error:", error);
-                statusElement.textContent = 'Connection Error. See console.';
-                logMessage("[ERROR] Could not connect. Check console.", 'log-error');
+                setStatus('Connection Error. Check console.', true);
+                setControls(false);
                 closePeerConnection(); 
             };
         }
 
         function disconnectStranger() {
             if (socket && socket.readyState === WebSocket.OPEN) {
-                // Send a signal to the server to disconnect from the current partner
+                // 1. Send a signal to the server to disconnect from the current partner
                 socket.send(JSON.stringify({ type: 'DISCONNECT' }));
-                statusElement.textContent = 'You disconnected. Looking for a new stranger...';
-                logMessage("[SYSTEM] Disconnected from current stranger. Waiting for a new match.");
+                
+                // 2. Update local state
+                setStatus('You disconnected. Press Connect to find a new stranger.');
                 setControls(false);
                 closePeerConnection(); // Immediately close WebRTC connection
-                // Server will automatically re-queue
+                // NOTE: We do NOT call connectStranger() here, as per the requirement.
             }
         }
         
-        // Initial connection attempt on page load
-        connectStranger();
+        // Initial setup on page load
+        setControls(false); 
     </script>
 </body>
 </html>
