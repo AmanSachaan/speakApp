@@ -13,6 +13,9 @@
             --bg-color: #f8f9fa;
             --card-bg: #ffffff;
             --text-color: #343a40;
+            /* New Note Color */
+            --note-bg: #fff3cd; /* Light yellow/orange background */
+            --note-text: #856404; /* Dark yellow/orange text */
         }
         body { 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
@@ -47,6 +50,7 @@
             display: flex;
             justify-content: space-around;
             gap: 15px;
+            margin-bottom: 25px; /* Added margin for separation */
         }
         .controls button { 
             flex-grow: 1;
@@ -80,6 +84,34 @@
         #remoteAudio { 
             display: none; 
         }
+        
+        /* --- NEW STATIC NOTE STYLES --- */
+        .mobile-note {
+            text-align: left;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 8px;
+            background-color: var(--note-bg);
+            color: var(--note-text);
+            border: 1px solid #ffeeba;
+            font-size: 0.9em;
+            display: flex;
+            align-items: flex-start; /* Changed to flex-start for bullet alignment */
+        }
+        .mobile-note .icon {
+            font-size: 1.5em;
+            margin-right: 10px;
+            line-height: 1; /* Aligns the icon to the top */
+        }
+        .mobile-note ul {
+            list-style-type: disc;
+            margin-top: 5px;
+            padding-left: 20px;
+        }
+        .mobile-note p {
+            margin: 0;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -95,7 +127,18 @@
             <button onclick="connectStranger()" id="connectButton">Connect</button>
             <button onclick="disconnectStranger()" id="disconnectButton" disabled>Disconnect</button>
         </div>
-    </div>
+
+        <div class="mobile-note">
+            <span class="icon">💡</span>
+            <div>
+                <p>To maintain the live connection:</p>
+                <ul>
+                    <li>Keep your screen unlocked.</li>
+                    <li>Keep the browser tab in the foreground.</li>
+                </ul>
+            </div>
+        </div>
+        </div>
 
     <script>
         // 🔑 RENDER FIX: Dynamically set the protocol (wss for production/Render, ws for local)
