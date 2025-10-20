@@ -22,9 +22,6 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 // Serve the static HTML file (Frontend) from the 'public' directory
-// NOTE: Assuming the HTML file is now directly in the project root or the path is adjusted.
-// If the HTML is in a 'public' directory, keep the original static serving.
-// For this example, I'll keep the structure and assume HTML is in a 'public' folder.
 app.use(express.static(path.join(__dirname, 'public')));
 
 
@@ -34,6 +31,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Array to hold clients waiting for a match.
 // Clients are now objects: { ws: WebSocket, status: 'WAITING' | 'DISCONNECTED' }
+// Key Fix: The logic needs to ensure the array only contains unique clients.
 const waitingClients = [];
 // Map to store connected pairs: { client1_socket: client2_socket, client2_socket: client1_socket }
 const pairs = new Map();
@@ -55,14 +53,25 @@ function sendMessageToClient(ws, type, payload) {
  * @param {WebSocket} ws - The connecting client's WebSocket
  */
 function attemptToPair(ws) {
-    // Filter out invalid or explicitly 'DISCONNECTED' clients before matching
+    // 1. Filter and clean the array before matching. We only want 'WAITING' clients who are not paired.
     const validWaitingClients = waitingClients.filter(c => 
         c.ws.readyState === c.ws.OPEN && !pairs.has(c.ws) && c.status === 'WAITING'
     );
     
-    // Clean up the main array
+    // Replace the waitingClients array with the filtered, valid list
     waitingClients.length = 0;
     waitingClients.push(...validWaitingClients);
+
+    // 2. Separate the current client from the waiting list temporarily.
+    const currentClientIndex = waitingClients.findIndex(c => c.ws === ws);
+    let currentClientObj;
+
+    if (currentClientIndex !== -1) {
+        currentClientObj = waitingClients.splice(currentClientIndex, 1)[0];
+    } else {
+        // This should not happen if CONNECT correctly sets the status, but as a fallback
+        currentClientObj = { ws: ws, status: 'WAITING' }; 
+    }
 
     if (waitingClients.length > 0) {
         // Match found!
@@ -78,8 +87,8 @@ function attemptToPair(ws) {
         
     } else {
         // No one is waiting, so this client waits.
-        // Add as a 'WAITING' client object
-        waitingClients.push({ ws: ws, status: 'WAITING' });
+        // Add the current client back with the correct status.
+        waitingClients.push(currentClientObj);
         sendMessageToClient(ws, 'STATUS', { message: 'Waiting for a stranger...' });
     }
 }
@@ -100,22 +109,27 @@ function disconnectPair(ws, shouldRequeuePartner = true) {
         pairs.delete(ws);
         pairs.delete(partner);
         
-        // 3. Put the partner back in the waiting queue immediately
-        if (shouldRequeuePartner) {
+        // 3. Update partner's status and potentially re-queue them
+        const partnerClientObj = waitingClients.find(c => c.ws === partner);
+
+        if (partnerClientObj) {
+            if (shouldRequeuePartner) {
+                partnerClientObj.status = 'WAITING';
+                attemptToPair(partner); // Re-run pairing logic for the partner
+            } else {
+                partnerClientObj.status = 'DISCONNECTED'; // Partner is now un-queued
+            }
+        } else if (shouldRequeuePartner) {
+            // Partner was in a pair but not in the waitingClients array (shouldn't happen, but safe)
+            waitingClients.push({ ws: partner, status: 'WAITING' });
             attemptToPair(partner);
-        } else {
-             // Find the partner in the waitingClients array and mark them as DISCONNECTED
-             const partnerIndex = waitingClients.findIndex(c => c.ws === partner);
-             if (partnerIndex !== -1) {
-                 waitingClients[partnerIndex].status = 'DISCONNECTED';
-             }
         }
     }
     
-    // Remove the current client from the waiting list in case they were waiting
-    const index = waitingClients.findIndex(c => c.ws === ws);
-    if (index !== -1) {
-        waitingClients.splice(index, 1);
+    // Set the current client's status to DISCONNECTED if they exist in the array
+    const clientObj = waitingClients.find(c => c.ws === ws);
+    if (clientObj) {
+        clientObj.status = 'DISCONNECTED';
     }
 }
 
@@ -124,24 +138,23 @@ function disconnectPair(ws, shouldRequeuePartner = true) {
  * @param {WebSocket} ws - The closing client's WebSocket
  */
 function cleanupClient(ws) {
-    // 1. Remove from waiting list if they were waiting
+    // 1. Disconnect from partner (and notify partner, re-queuing partner)
+    disconnectPair(ws, true);
+    
+    // 2. Remove client object completely from waiting list
     const index = waitingClients.findIndex(c => c.ws === ws);
     if (index !== -1) {
         waitingClients.splice(index, 1);
     }
-    
-    // 2. Disconnect from partner if they were paired (and notify partner, re-queuing partner)
-    disconnectPair(ws, true);
 }
 
 // WebSocket connection handler
 wss.on('connection', function connection(ws) {
-    // Client connects, do NOT auto-pair, they must click 'Connect'
+    // Client connects: add them to the managed list immediately with DISCONNECTED status
+    const newClientObj = { ws: ws, status: 'DISCONNECTED' };
+    waitingClients.push(newClientObj);
+
     sendMessageToClient(ws, 'STATUS', { message: 'Press Connect to start.' });
-    
-    // Add the new client to a pseudo-waiting list with a 'DISCONNECTED' status
-    // to allow 'CONNECT' to find them later, but only if they explicitly ask.
-    waitingClients.push({ ws: ws, status: 'DISCONNECTED' }); 
 
     // Handle messages from client
     ws.on('message', function incoming(message) {
@@ -154,10 +167,8 @@ wss.on('connection', function connection(ws) {
 
         switch (data.type) {
             case 'SIGNAL':
-                // WebRTC Signaling Data (Offer, Answer, or ICE Candidate)
                 const partner = pairs.get(ws);
                 if (partner) {
-                    // Forward the signal object (SDP or ICE) to the partner
                     sendMessageToClient(partner, 'SIGNAL', { signal: data.signal });
                 } else {
                     sendMessageToClient(ws, 'STATUS', { message: 'You are not paired.' });
@@ -165,30 +176,26 @@ wss.on('connection', function connection(ws) {
                 break;
 
             case 'DISCONNECT':
-                // Client requests to disconnect from partner, partner gets re-queued.
-                // The current client's partner *should* be re-queued.
-                // The current client is marked as 'DISCONNECTED' and removed from the queue.
-                disconnectPair(ws, true); // Re-queue partner
-                
-                // Add the current client back with DISCONNECTED status (prevents auto-reconnect)
-                waitingClients.push({ ws: ws, status: 'DISCONNECTED' }); 
+                // Client explicitly disconnects. Partner is re-queued, this client is marked DISCONNECTED.
+                disconnectPair(ws, true); 
                 sendMessageToClient(ws, 'STATUS', { message: 'Disconnected. Press Connect for a new stranger.' });
                 break;
 
             case 'CONNECT':
                 // Explicit request to connect/re-connect
-                // 1. Clean up any existing pairing and set the current client status to 'WAITING'
-                disconnectPair(ws, false); // Do NOT re-queue the current client's partner if they had one
                 
-                // 2. Find the client in the array and update status to 'WAITING'
+                // 1. Disconnect from any current partner (partner is NOT re-queued, they're marked DISCONNECTED)
+                disconnectPair(ws, false); 
+                
+                // 2. Find the client and update status to 'WAITING'
                 const clientObj = waitingClients.find(c => c.ws === ws);
                 if (clientObj) {
                     clientObj.status = 'WAITING';
                 } else {
-                    // Should not happen if connection is handled correctly, but for safety:
-                    waitingClients.push({ ws: ws, status: 'WAITING' });
+                     // Should not happen, but if they weren't in the array, add them now
+                     waitingClients.push({ ws: ws, status: 'WAITING' });
                 }
-
+                
                 // 3. Attempt to find a match
                 attemptToPair(ws);
                 break;
@@ -208,4 +215,5 @@ wss.on('connection', function connection(ws) {
 
 // Start the HTTP/WebSocket server
 server.listen(PORT, () => {
+    // console.log output is removed as requested
 });
