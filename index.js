@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+// Standard setup for ES Modules to get __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -12,7 +13,8 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Serve static files (assuming your index.html is in a 'public' folder)
+// Serve static files (Assuming client code is saved as 'public/index.html')
+// NOTE: Make sure your index.html is in a folder named 'public'
 app.use(express.static(path.join(__dirname, 'public')));
 
 
@@ -20,7 +22,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // WebRTC Signaling & Stranger Pairing Logic
 // ----------------------------------------------------------------
 
-// Stores { mode: [{ ws: WebSocket, mode: 'voice'|'video', status: 'WAITING' }, ...] }
+// Stores { mode: [{ ws: WebSocket, mode: 'voice'|'video' }, ...] }
 const pendingUsers = {
     voice: [],
     video: []
@@ -50,6 +52,7 @@ function sendMessageToClient(ws, type, payload) {
 function enableVideoModeForPair(ws1, ws2) {
     // Check if the pair is still connected before sending
     if (pairedConnections.get(ws1) === ws2) {
+        // CRITICAL: Send the ENABLE_VIDEO signal to trigger client-side track replacement and renegotiation
         sendMessageToClient(ws1, 'ENABLE_VIDEO', { message: 'Video chat enabled! Say hello visually. 🤳' });
         sendMessageToClient(ws2, 'ENABLE_VIDEO', { message: 'Video chat enabled! Say hello visually. 🤳' });
     }
@@ -85,8 +88,11 @@ function attemptToPair(client) {
         pairedConnections.set(ws, partner);
         pairedConnections.set(partner, ws);
         
-        sendMessageToClient(ws, 'PAIR_FOUND', { initiator: true }); // Initiator
-        sendMessageToClient(partner, 'PAIR_FOUND', { initiator: false });
+        // Use random initiator for balanced negotiation load
+        const initiator = Math.random() < 0.5;
+
+        sendMessageToClient(ws, 'PAIR_FOUND', { initiator: initiator }); 
+        sendMessageToClient(partner, 'PAIR_FOUND', { initiator: !initiator });
         
         console.log(`Paired client in ${mode} mode.`);
         
@@ -112,8 +118,6 @@ function attemptToPair(client) {
 
 /**
  * Disconnects a client from their current partner and cleans up state.
- * @param {WebSocket} ws The client initiating the disconnection or closure.
- * @param {boolean} shouldRequeuePartner If the partner should be immediately put back into a queue.
  */
 function disconnectPair(ws, shouldRequeuePartner) {
     const partner = pairedConnections.get(ws);
@@ -130,17 +134,16 @@ function disconnectPair(ws, shouldRequeuePartner) {
     
     // 2. Partner cleanup
     if (partner) {
+        // Notify partner to clean up their state
         sendMessageToClient(partner, 'DISCONNECTED', { message: 'Your partner disconnected.' });
         
         pairedConnections.delete(ws);
         pairedConnections.delete(partner);
         
-        if (shouldRequeuePartner) {
-            // Find partner's original connection details to requeue them
-            const partnerClientObj = { ws: partner, mode: 'voice' }; // Default to voice if not in map
-            
-            // Note: We don't store client objects globally, so we assume 'voice' or rely on client's CONNECT message.
-            // For simplicity, we assume they want to continue search in default mode.
+        if (shouldRequeuePartner && partner.readyState === partner.OPEN) {
+            // Requeue partner for a new match (assuming 'voice' mode for simplicity)
+            // A more complex system would store the partner's preferred mode
+            const partnerClientObj = { ws: partner, mode: 'voice' }; 
             attemptToPair(partnerClientObj); 
         }
     }
@@ -169,8 +172,7 @@ wss.on('connection', function connection(ws) {
                 if (partner) {
                     sendMessageToClient(partner, 'SIGNAL', { signal: data.signal });
                 } else {
-                    // This often means the partner disconnected without the server knowing right away
-                    // Clean up and notify self
+                    // This indicates an issue, so clean up the client's state
                     disconnectPair(ws, false); 
                     sendMessageToClient(ws, 'STATUS', { message: 'Signaling failed: You are not paired.' });
                 }
@@ -178,7 +180,7 @@ wss.on('connection', function connection(ws) {
 
             case 'DISCONNECT':
                 // Client initiated manual disconnect
-                disconnectPair(ws, false); // Do NOT requeue partner
+                disconnectPair(ws, false); 
                 sendMessageToClient(ws, 'STATUS', { message: 'Disconnected. Press Connect for a new stranger.' });
                 break;
 
@@ -197,17 +199,18 @@ wss.on('connection', function connection(ws) {
     });
 
     ws.on('close', function close() {
-        // Client closed the tab/browser
-        disconnectPair(ws, true); // Requeue partner
+        // Client closed the tab/browser - requeue partner if they exist
+        disconnectPair(ws, true); 
     });
 
     ws.on('error', (err) => {
         console.error("WebSocket Error:", err.message);
-        disconnectPair(ws, true); // Requeue partner
+        // Client experienced an error - requeue partner if they exist
+        disconnectPair(ws, true); 
     });
 });
 
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`Serving static files from ${path.join(__dirname, 'public')}`);
+    console.log(`Open http://localhost:${PORT} in your browser.`);
 });
