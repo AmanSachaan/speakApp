@@ -30,8 +30,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ----------------------------------------------------------------
 
 // Array to hold clients waiting for a match.
-// Clients are now objects: { ws: WebSocket, status: 'WAITING' | 'DISCONNECTED' }
-// Key Fix: The logic needs to ensure the array only contains unique clients.
+// Clients are now objects: { ws: WebSocket, status: 'WAITING' | 'DISCONNECTED', mode: 'voice' | 'video' }
 const waitingClients = [];
 // Map to store connected pairs: { client1_socket: client2_socket, client2_socket: client1_socket }
 const pairs = new Map();
@@ -69,8 +68,8 @@ function attemptToPair(ws) {
     if (currentClientIndex !== -1) {
         currentClientObj = waitingClients.splice(currentClientIndex, 1)[0];
     } else {
-        // This should not happen if CONNECT correctly sets the status, but as a fallback
-        currentClientObj = { ws: ws, status: 'WAITING' }; 
+        // Fallback: If client not found in array (shouldn't happen), assume current settings
+        currentClientObj = { ws: ws, status: 'WAITING', mode: 'voice' };
     }
 
     if (waitingClients.length > 0) {
@@ -82,14 +81,15 @@ function attemptToPair(ws) {
         pairs.set(partner, ws);
         
         // Notify both clients of the connection and designate the initiator.
+        // We could also pass the requested modes here, but the core WebRTC negotiation handles it.
         sendMessageToClient(ws, 'PAIR_FOUND', { initiator: true });
         sendMessageToClient(partner, 'PAIR_FOUND', { initiator: false });
         
     } else {
         // No one is waiting, so this client waits.
-        // Add the current client back with the correct status.
+        // Add the current client back with the correct status and mode.
         waitingClients.push(currentClientObj);
-        sendMessageToClient(ws, 'STATUS', { message: 'Waiting for a stranger...' });
+        sendMessageToClient(ws, 'STATUS', { message: `Waiting for a stranger (${currentClientObj.mode} mode)...` });
     }
 }
 
@@ -121,7 +121,7 @@ function disconnectPair(ws, shouldRequeuePartner = true) {
             }
         } else if (shouldRequeuePartner) {
             // Partner was in a pair but not in the waitingClients array (shouldn't happen, but safe)
-            waitingClients.push({ ws: partner, status: 'WAITING' });
+            waitingClients.push({ ws: partner, status: 'WAITING', mode: 'voice' }); // Default to 'voice' on recovery
             attemptToPair(partner);
         }
     }
@@ -151,7 +151,7 @@ function cleanupClient(ws) {
 // WebSocket connection handler
 wss.on('connection', function connection(ws) {
     // Client connects: add them to the managed list immediately with DISCONNECTED status
-    const newClientObj = { ws: ws, status: 'DISCONNECTED' };
+    const newClientObj = { ws: ws, status: 'DISCONNECTED', mode: 'voice' }; // Default mode is 'voice'
     waitingClients.push(newClientObj);
 
     sendMessageToClient(ws, 'STATUS', { message: 'Press Connect to start.' });
@@ -187,13 +187,15 @@ wss.on('connection', function connection(ws) {
                 // 1. Disconnect from any current partner (partner is NOT re-queued, they're marked DISCONNECTED)
                 disconnectPair(ws, false); 
                 
-                // 2. Find the client and update status to 'WAITING'
+                // 2. Find the client and update status to 'WAITING' and set the requested mode
                 const clientObj = waitingClients.find(c => c.ws === ws);
                 if (clientObj) {
                     clientObj.status = 'WAITING';
+                    // Update the mode based on the client request
+                    clientObj.mode = data.mode === 'video' ? 'video' : 'voice'; 
                 } else {
                      // Should not happen, but if they weren't in the array, add them now
-                     waitingClients.push({ ws: ws, status: 'WAITING' });
+                     waitingClients.push({ ws: ws, status: 'WAITING', mode: data.mode === 'video' ? 'video' : 'voice' });
                 }
                 
                 // 3. Attempt to find a match
