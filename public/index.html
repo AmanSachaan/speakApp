@@ -226,7 +226,9 @@
         let peerConnection = null;
         let localStream = null;
         let connectionMode = 'voice'; 
-        let videoTimer = null; // Timer interval handler
+        let videoTimer = null; 
+        // Store a reference to the video transceiver for easy replacement later
+        let videoTransceiver = null;
         const VIDEO_DELAY_SECONDS = 60; 
 
         // --- DOM Elements ---
@@ -249,16 +251,12 @@
         
         // --- UI Control Functions ---
 
-        /** * Sets the connection mode (voice or video) and updates the UI. 
-         * Only allows setting the mode manually if not connected/connecting.
-        */
+        /** Sets the connection mode (voice or video) and updates the UI appearance. */
         function setMode(mode) {
-            // Check if user is paired (connectButton.disabled is true when paired)
             const isPaired = disconnectButton.disabled === false;
             
-            // Allow mode change only if NOT paired, and NOT currently attempting to connect
-            if (isPaired || connectButton.disabled) {
-                 // If paired, do nothing. If connecting, let the connectStranger logic handle it.
+            // Prevent manual mode switch if paired or searching for a partner
+            if (isPaired || (connectButton.disabled && connectButton.textContent === 'Connect')) {
                  return; 
             }
             
@@ -283,6 +281,7 @@
             }
             
             setStatus('Mode set. Press Connect to start.');
+            setControls(isPaired); 
         }
 
         function setStatus(text, isError = false) {
@@ -291,36 +290,37 @@
             statusElement.style.color = isError ? '#721c24' : (text.includes('Connected') ? '#155724' : '#6c757d');
         }
 
-        /** * Controls button states and enforces the auto-toggle policy. 
-         */
+        /** Controls button states and enforces the auto-toggle policy. */
         function setControls(isPaired, isConnecting = false) {
             disconnectButton.disabled = !isPaired;
             connectButton.textContent = isPaired ? 'Find New Stranger' : 'Connect';
             connectButton.disabled = isConnecting;
             
-            // By default, disable mode buttons if connecting or already paired.
-            voiceButton.disabled = isConnecting || isPaired;
-            videoButton.disabled = isConnecting || isPaired;
+            // Default mode button state: enabled if not paired/connecting
+            const modeToggleDisabled = isConnecting || isPaired;
+            voiceButton.disabled = modeToggleDisabled;
+            videoButton.disabled = modeToggleDisabled;
             
-            // ENFORCEMENT OF AUTO-TOGGLE POLICY:
-            // 1. If paired and still in voice mode (timer running), the video button MUST be disabled.
-            if (isPaired && connectionMode === 'voice') {
-                videoButton.disabled = true;
-                timerContainer.style.display = 'block'; 
-            } 
-            // 2. If paired and in video mode (after auto-toggle), voice button MUST be disabled.
-            else if (isPaired && connectionMode === 'video') {
+            // --- ENFORCEMENT OF AUTO-TOGGLE POLICY ---
+            if (isPaired) {
                 voiceButton.disabled = true;
-                videoButton.disabled = false; // Video is now the active mode
-                timerContainer.style.display = 'none';
-            }
-            // 3. If not paired (initial state or disconnected), allow mode selection (handled by default logic)
-            else {
+                videoButton.disabled = true;
+
+                if (connectionMode === 'voice') {
+                    // Paired in Voice Mode: Timer runs, video button is locked
+                    timerContainer.style.display = 'block'; 
+                } else if (connectionMode === 'video') {
+                    // Paired in Video Mode (after auto-toggle): timer off, mode locked
+                    timerContainer.style.display = 'none';
+                    // The video button is disabled, but its visual state ('active' class) shows the mode
+                }
+            } else {
+                 // Not paired: allow user to select a mode.
                  timerContainer.style.display = 'none'; 
             }
         }
 
-        // --- TIMER LOGIC ---
+        // --- TIMER LOGIC (Unchanged) ---
 
         function clearVideoTimer() {
             if (videoTimer) {
@@ -351,18 +351,26 @@
             }, 1000);
         }
 
-        // --- WebRTC Logic (Unchanged) ---
-
-        async function startLocalMedia() {
+        // --- WebRTC/Media Logic (Refined) ---
+        
+        async function startLocalMedia(videoEnabled) {
             try {
-                stopLocalMedia();
-                const constraints = connectionMode === 'video' 
-                    ? { audio: true, video: true } 
-                    : { audio: true, video: false };
+                // IMPORTANT: Stop tracks only if the mode is changing to prevent flicker/re-asking
+                if (localStream && (localStream.getVideoTracks().length > 0) !== videoEnabled) {
+                    stopLocalMedia();
+                } else if (localStream) {
+                    // If stream exists and video requirement matches, just return true
+                    return true;
+                }
+                
+                const constraints = { 
+                    audio: true, 
+                    video: videoEnabled 
+                };
 
                 localStream = await navigator.mediaDevices.getUserMedia(constraints);
                 
-                if (connectionMode === 'video') {
+                if (videoEnabled) {
                     localVideo.srcObject = localStream;
                     localVideo.play();
                 }
@@ -370,7 +378,7 @@
                 return true;
             } catch (e) {
                 console.error("Error accessing media devices:", e);
-                setStatus(`Error: ${connectionMode === 'video' ? 'Camera/Mic' : 'Microphone'} access is required.`, true);
+                setStatus(`Error: ${videoEnabled ? 'Camera/Mic' : 'Microphone'} access is required.`, true);
                 setControls(false);
                 return false;
             }
@@ -388,6 +396,7 @@
             if (peerConnection) {
                 peerConnection.close();
                 peerConnection = null;
+                videoTransceiver = null; // Clear transceiver reference
             }
             [remoteAudio, remoteVideo].forEach(el => {
                 if (el.srcObject) {
@@ -398,29 +407,45 @@
             clearVideoTimer(); 
         }
         
+        /** Initializes peer connection and adds transceivers */
         function createPeerConnection(isInitiator) {
             if (!localStream) return;
             closePeerConnection();
+
             peerConnection = new RTCPeerConnection(ICE_SERVERS);
-            localStream.getTracks().forEach(track => {
-                peerConnection.addTrack(track, localStream);
-            });
+            
+            // 1. Add Audio Transceiver (always required)
+            const audioTrack = localStream.getAudioTracks()[0];
+            peerConnection.addTrack(audioTrack, localStream);
+
+            // 2. Add Video Transceiver (starts with null track if in voice mode)
+            const initialVideoTrack = localStream.getVideoTracks()[0];
+            videoTransceiver = peerConnection.addTransceiver('video', { direction: 'sendrecv' });
+            if (initialVideoTrack) {
+                videoTransceiver.sender.replaceTrack(initialVideoTrack);
+            }
+            
+            // This is CRITICAL for audio/video consistency on the remote side
             peerConnection.ontrack = (event) => {
                 const stream = event.streams[0];
-                if (stream.getAudioTracks().length > 0) {
-                    if (remoteAudio.srcObject !== stream) {
-                        remoteAudio.srcObject = stream;
-                        remoteAudio.play().catch(e => { /* Autoplay block */ });
-                    }
+                const audioTracks = stream.getAudioTracks();
+                const videoTracks = stream.getVideoTracks();
+
+                if (audioTracks.length > 0) {
+                    // Set remote audio regardless of connection mode
+                    remoteAudio.srcObject = stream;
+                    remoteAudio.play().catch(e => console.log('Autoplay blocked for audio:', e));
                 }
-                // Only handle remote video if connectionMode is set to 'video'
-                if (connectionMode === 'video' && stream.getVideoTracks().length > 0) {
-                    if (remoteVideo.srcObject !== stream) {
+
+                if (videoTracks.length > 0) {
+                    // Set remote video only if we are in video mode
+                    if (connectionMode === 'video') {
                         remoteVideo.srcObject = stream;
                         remoteVideo.play();
                     }
                 }
             };
+            
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate && socket && socket.readyState === WebSocket.OPEN) {
                     socket.send(JSON.stringify({
@@ -429,6 +454,8 @@
                     }));
                 }
             };
+            
+            // Negotiation is always needed initially and after video enablement
             if (isInitiator) {
                 peerConnection.onnegotiationneeded = async () => {
                     try {
@@ -470,22 +497,15 @@
             }
         }
         
-        // --- WebSocket Logic (Updated connectStranger) ---
+        // --- WebSocket Logic ---
 
         function connectStranger() {
             clearVideoTimer(); 
-            setControls(false, true); // Set controls to connecting state
+            setControls(false, true); 
             closePeerConnection();
-
-            // When a new connection starts, always default to voice mode if not already set to video
-            if (connectionMode !== 'video') {
-                setMode('voice'); 
-                // CRITICAL: Disable video button manually here if starting in voice mode, 
-                // preventing mode switch while waiting/paired.
-                videoButton.disabled = true;
-                voiceButton.disabled = true; // Also disable voice button during search
-            }
-
+            
+            voiceButton.disabled = true;
+            videoButton.disabled = true;
 
             if (socket && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ type: 'CONNECT', mode: connectionMode }));
@@ -497,7 +517,9 @@
             socket = new WebSocket(websocketUrl); 
 
             socket.onopen = async () => {
-                const mediaReady = await startLocalMedia();
+                const videoEnabled = connectionMode === 'video';
+                const mediaReady = await startLocalMedia(videoEnabled);
+
                 if (mediaReady) {
                     socket.send(JSON.stringify({ type: 'CONNECT', mode: connectionMode }));
                     setStatus(`Searching for a stranger in ${connectionMode} mode...`);
@@ -517,59 +539,46 @@
                     case 'PAIR_FOUND':
                         setStatus('Voice chat connected! Video will enable in 60 seconds. 💬');
                         setControls(true);
-                        startVideoTimer(); // START TIMER
-                        // Ensure video button is disabled and voice button is active/disabled
-                        if(connectionMode === 'voice') {
-                            videoButton.disabled = true;
-                            voiceButton.disabled = true;
-                        }
-                        createPeerConnection(data.initiator);
+                        startVideoTimer();
+                        // CRITICAL: Start PC with initial (voice-only) stream
+                        createPeerConnection(data.initiator); 
                         break;
 
                     case 'ENABLE_VIDEO':
                         setStatus('Video chat enabled! Say hello visually. 🤳');
-                        clearVideoTimer(); // STOP TIMER
+                        clearVideoTimer();
                         
-                        // Request Media, Update Mode/UI, Re-negotiate
-                        startLocalMedia().then(success => {
-                            if (success) {
-                                // The critical AUTO-TOGGLE:
-                                connectionMode = 'video';
-                                setMode('video'); 
+                        // 1. Update internal state
+                        connectionMode = 'video';
+                        setMode('video'); 
+                        setControls(true); // Re-enforce controls in paired-video state
+                        
+                        // 2. Request new video stream with camera enabled
+                        startLocalMedia(true).then(success => {
+                            if (success && peerConnection && videoTransceiver) {
+                                const videoTrack = localStream.getVideoTracks()[0];
                                 
-                                if (peerConnection) {
-                                    // Replace audio track with video track for negotiation
-                                    const videoTrack = localStream.getVideoTracks()[0];
-                                    if(videoTrack) {
-                                         // Find the existing audio track sender and replace
-                                         peerConnection.getSenders().forEach(sender => {
-                                            if (sender.track.kind === 'video') {
-                                                sender.replaceTrack(videoTrack);
-                                            } else if (sender.track.kind === 'audio') {
-                                                // Keep the audio track
-                                            } else {
-                                                // Add the new video track if not present (for some browsers)
-                                                peerConnection.addTrack(videoTrack, localStream);
-                                            }
-                                        });
-                                    }
-                                    
-                                    // Trigger negotiation to send the new SDP with video capability
-                                    peerConnection.createOffer()
+                                // CRITICAL: Use the transceiver to replace the track
+                                if (videoTrack) {
+                                    videoTransceiver.sender.replaceTrack(videoTrack)
+                                        .then(() => {
+                                            // 3. Trigger negotiation to send the new SDP with video capability
+                                            return peerConnection.createOffer();
+                                        })
                                         .then(offer => peerConnection.setLocalDescription(offer))
                                         .then(() => {
                                             socket.send(JSON.stringify({
                                                 type: 'SIGNAL',
                                                 signal: { sdp: peerConnection.localDescription }
                                             }));
-                                        });
+                                        })
+                                        .catch(e => console.error("Error during video negotiation:", e));
+                                } else {
+                                    console.error("No video track found for replacement.");
                                 }
                             }
                         });
 
-                        // Set button state to locked video mode
-                        videoButton.disabled = true;
-                        voiceButton.disabled = true;
                         break;
 
                     case 'SIGNAL':
@@ -578,41 +587,44 @@
                         
                     case 'DISCONNECTED':
                         setStatus('Partner disconnected. Press Connect to find a new one.');
-                        setControls(false); 
                         closePeerConnection(); 
                         stopLocalMedia(); 
+                        connectionMode = 'voice'; 
                         setMode('voice'); 
+                        setControls(false); 
                         break;
                 }
             };
 
             socket.onclose = () => {
                 setStatus('Disconnected from server. Press Connect to start.');
-                setControls(false);
                 closePeerConnection(); 
                 stopLocalMedia();
+                connectionMode = 'voice'; 
                 setMode('voice');
+                setControls(false);
             };
 
             socket.onerror = (error) => {
                 setStatus('Connection Error. Check console.', true);
-                setControls(false);
                 closePeerConnection(); 
                 stopLocalMedia();
+                connectionMode = 'voice'; 
                 setMode('voice');
+                setControls(false);
             };
         }
 
         function disconnectStranger() {
             if (socket && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ type: 'DISCONNECT' }));
-                
-                setStatus('You disconnected. Press Connect to find a new stranger.');
-                setControls(false);
-                closePeerConnection(); 
-                stopLocalMedia();
-                setMode('voice');
             }
+            setStatus('You disconnected. Press Connect to find a new stranger.');
+            closePeerConnection(); 
+            stopLocalMedia();
+            connectionMode = 'voice'; 
+            setMode('voice');
+            setControls(false);
         }
         
         // Initial setup on page load
