@@ -84,6 +84,7 @@
         .mode-toggle button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+            color: #999;
         }
 
         /* --- STATUS, CONTROLS, ETC. --- */
@@ -95,6 +96,7 @@
             font-size: 1.1em;
             background-color: #e9ecef;
             color: var(--secondary-color);
+            transition: all 0.3s ease;
         }
         .controls { 
             display: flex;
@@ -118,6 +120,10 @@
             background-color: var(--success-color); 
             color: white; 
         }
+        #connectButton:disabled {
+            background-color: #a5d6a7;
+            cursor: not-allowed;
+        }
         #disconnectButton { 
             background-color: var(--danger-color); 
             color: white; 
@@ -136,7 +142,6 @@
             border-radius: 8px;
             background-color: #000;
             margin-bottom: 20px;
-            /* CRITICAL: Ensure video elements are displayed only when in video mode */
             display: none; 
         }
         #remoteAudio { 
@@ -153,39 +158,23 @@
             color: var(--note-text);
             border: 1px solid #ffeeba;
             font-size: 0.9em;
-            display: flex;
-            align-items: flex-start;
         }
-        .mobile-note .icon {
-            font-size: 1.5em;
-            margin-right: 10px;
-            line-height: 1;
-        }
-        .mobile-note ul {
-            list-style-type: disc;
-            margin-top: 5px;
-            padding-left: 20px;
-        }
-        .mobile-note p {
-            margin: 0;
-            font-weight: bold;
-        }
-        .mobile-note p:last-of-type {
-            font-weight: normal; 
-            margin-top: 5px;
-        }
+        .mobile-note p { margin: 0; font-weight: bold; }
+        .mobile-note ul { list-style-type: disc; margin-top: 5px; padding-left: 20px; }
+        .mobile-note li { margin-bottom: 5px; }
+
     </style>
 </head>
 <body>
 
     <div class="container">
-        <h1>Stranger Connect 💬</h1>
+        <h1 id="mainTitle">Stranger Connect 💬</h1>
         
         <div id="timerContainer">Video in: <span id="timerDisplay">60</span>s</div>
 
         <div class="mode-toggle">
-            <button id="voiceButton" class="active" onclick="setMode('voice')">Voice Only 🎙️</button>
-            <button id="videoButton" onclick="setMode('video')">Video Chat 🤳</button>
+            <button id="voiceButton" class="active">Voice Only 🎙️</button>
+            <button id="videoButton" disabled>Video Chat 🤳</button>
         </div>
 
         <video id="localVideo" autoplay muted></video>
@@ -200,19 +189,11 @@
         </div>
 
         <div class="mobile-note">
-            <span class="icon">💡</span>
-            <div>
-                <p>Video Policy:</p>
-                <ul>
-                    <li>**Video chat will automatically enable after 60 seconds** of being connected with a stranger.</li>
-                </ul>
-                <p>To maintain the live connection:</p>
-                <ul>
-                    <li>**Keep your screen unlocked.**</li>
-                    <li>**Keep the browser tab in the foreground.**</li>
-                </ul>
-                <p>Mobile operating systems may suspend background connections.</p>
-            </div>
+            <p>Video Policy:</p>
+            <ul>
+                <li>Connections always start as **voice-only**.</li>
+                <li>**Video chat will automatically enable after 60 seconds** of a successful connection.</li>
+            </ul>
         </div>
     </div>
 
@@ -225,9 +206,9 @@
         let socket = null;
         let peerConnection = null;
         let localStream = null;
-        let connectionMode = 'voice'; 
+        let connectionMode = 'voice'; // Always starts as 'voice'
         let videoTimer = null; 
-        let videoTransceiver = null; // Stored for track replacement during video upgrade
+        let videoTransceiver = null; // Stores the video transceiver for track replacement
         const VIDEO_DELAY_SECONDS = 60; 
 
         // --- DOM Elements ---
@@ -240,7 +221,8 @@
         const voiceButton = document.getElementById('voiceButton');
         const videoButton = document.getElementById('videoButton');
         const timerContainer = document.getElementById('timerContainer'); 
-        const timerDisplay = document.getElementById('timerDisplay');     
+        const timerDisplay = document.getElementById('timerDisplay');
+        const mainTitle = document.getElementById('mainTitle');   
 
         const ICE_SERVERS = {
             iceServers: [
@@ -250,20 +232,8 @@
         
         // --- UI Control Functions ---
 
-        /** Sets the connection mode and updates the UI appearance. */
-        function setMode(mode) {
-            const isPaired = disconnectButton.disabled === false;
-            
-            // Prevent manual mode switch if paired or searching for a partner
-            if (isPaired || (connectButton.disabled && connectButton.textContent === 'Connect')) {
-                 return; 
-            }
-            
-            // Stop media only if mode is changing, forcing a new track acquisition later
-            if (mode !== connectionMode) {
-                 stopLocalMedia();
-            }
-            
+        /** Updates UI elements based on the current mode. */
+        function updateUiForMode(mode) {
             connectionMode = mode;
             voiceButton.classList.remove('active');
             videoButton.classList.remove('active');
@@ -272,19 +242,13 @@
                 voiceButton.classList.add('active');
                 localVideo.style.display = 'none';
                 remoteVideo.style.display = 'none';
-                document.querySelector('h1').textContent = 'Stranger Voice Connect 🎙️';
-            } else {
+                mainTitle.textContent = 'Stranger Voice Connect 🎙️';
+            } else { // mode === 'video'
                 videoButton.classList.add('active');
                 localVideo.style.display = 'block';
                 remoteVideo.style.display = 'block';
-                document.querySelector('h1').textContent = 'Stranger Video Connect 🤳';
+                mainTitle.textContent = 'Stranger Video Connect 🤳';
             }
-            
-            // Only update status if the app is currently disconnected
-            if (!isPaired) {
-                setStatus('Mode set. Press Connect to start.');
-            }
-            setControls(isPaired); 
         }
 
         function setStatus(text, isError = false) {
@@ -293,22 +257,14 @@
             statusElement.style.color = isError ? '#721c24' : (text.includes('Connected') ? '#155724' : '#6c757d');
         }
 
-        /** Controls button states and enforces the auto-toggle policy. */
+        /** Controls button states based on connection status. */
         function setControls(isPaired, isConnecting = false) {
             disconnectButton.disabled = !isPaired;
-            connectButton.textContent = isPaired ? 'Find New Stranger' : 'Connect';
             connectButton.disabled = isConnecting;
+            connectButton.textContent = isPaired ? 'Find New Stranger' : 'Connect';
             
-            const modeToggleDisabled = isConnecting || isPaired;
-            voiceButton.disabled = modeToggleDisabled;
-            videoButton.disabled = modeToggleDisabled;
-            
-            // --- TIMER/VIDEO UI ENFORCEMENT ---
-            if (isPaired && connectionMode === 'voice') {
-                timerContainer.style.display = 'block';
-            } else {
-                 timerContainer.style.display = 'none'; 
-            }
+            // Video button is ONLY enabled when paired AND in video mode.
+            videoButton.disabled = !(isPaired && connectionMode === 'video');
         }
 
         // --- TIMER LOGIC ---
@@ -333,51 +289,31 @@
                 if (remaining >= 0) {
                     timerDisplay.textContent = remaining;
                 }
-                
                 if (remaining <= 0) {
-                    // Timer finished, server should have sent ENABLE_VIDEO
-                    timerDisplay.textContent = 0;
                     clearInterval(videoTimer); 
                     videoTimer = null;
+                    // Server will send ENABLE_VIDEO, no need to do anything here
                 }
             }, 1000);
         }
 
         // --- WebRTC/Media Logic ---
         
-        /** Acquires or updates the local media stream based on videoEnabled flag. */
-        async function startLocalMedia(videoEnabled) {
-             // 1. Check if the current stream already satisfies the request
-            if (localStream && (localStream.getVideoTracks().length > 0) === videoEnabled) {
-                return true;
-            }
-            
-            // 2. Stop existing stream if its video state is different from the request
+        /** Acquires local media stream. */
+        async function getLocalMedia(videoEnabled) {
             if (localStream) {
                 stopLocalMedia();
             }
-
             try {
-                const constraints = { 
-                    audio: true, 
-                    // Crucial: Use 'true' for video if requested, or 'false' (no video) for voice mode
-                    video: videoEnabled 
-                };
-
+                const constraints = { audio: true, video: videoEnabled };
                 localStream = await navigator.mediaDevices.getUserMedia(constraints);
-                
                 if (videoEnabled) {
                     localVideo.srcObject = localStream;
-                    localVideo.play();
-                } else if (localVideo.srcObject) {
-                    localVideo.srcObject = null; 
                 }
-
                 return true;
             } catch (e) {
                 console.error("Error accessing media devices:", e);
                 setStatus(`Error: ${videoEnabled ? 'Camera/Mic' : 'Microphone'} access is required.`, true);
-                setControls(false);
                 return false;
             }
         }
@@ -396,7 +332,6 @@
                 peerConnection = null;
                 videoTransceiver = null;
             }
-            // Ensure remote streams are stopped/cleared
             [remoteAudio, remoteVideo].forEach(el => {
                 if (el.srcObject) {
                     el.srcObject.getTracks().forEach(track => track.stop());
@@ -412,41 +347,19 @@
 
             peerConnection = new RTCPeerConnection(ICE_SERVERS);
             
-            // 1. Add Audio Transceiver
-            const audioTrack = localStream.getAudioTracks()[0];
-            if (audioTrack) {
-                peerConnection.addTrack(audioTrack, localStream);
-            }
+            // Add audio track
+            localStream.getAudioTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-            // 2. Add Video Transceiver (starts with video track if available, or null)
-            const initialVideoTrack = localStream.getVideoTracks()[0] || null;
-            // CRITICAL: We MUST use addTransceiver and keep a reference to replace the track later
-            videoTransceiver = peerConnection.addTransceiver(initialVideoTrack || 'video', { direction: 'sendrecv' });
+            // CRITICAL: Add a video transceiver from the start. It will be inactive for voice calls
+            // but is ready for the track to be added later without full renegotiation.
+            videoTransceiver = peerConnection.addTransceiver('video', { direction: 'inactive' });
             
-            if (initialVideoTrack) {
-                // If starting in video mode, set the track now
-                videoTransceiver.sender.replaceTrack(initialVideoTrack);
-            }
-            
-            // Handle remote tracks coming in
             peerConnection.ontrack = (event) => {
-                const track = event.track;
                 const stream = event.streams[0];
-                
-                if (track.kind === 'audio') {
-                    // Set the entire remote stream to the audio element.
-                    // This is robust for handling subsequent negotiation with video.
+                if (event.track.kind === 'audio') {
                     remoteAudio.srcObject = stream;
-                    remoteAudio.play().catch(e => console.log('Autoplay blocked for audio:', e));
-                }
-                
-                if (track.kind === 'video') {
-                    // Set the entire remote stream to the video element.
+                } else if (event.track.kind === 'video') {
                     remoteVideo.srcObject = stream;
-                    // Only display if local mode supports video (it will be after ENABLE_VIDEO)
-                    if (connectionMode === 'video') {
-                         remoteVideo.play();
-                    }
                 }
             };
             
@@ -459,25 +372,21 @@
                 }
             };
             
-            // The initiator manually creates the first offer and negotiationneeded will handle renegotiations
+            peerConnection.onnegotiationneeded = async () => {
+                try {
+                    const offer = await peerConnection.createOffer();
+                    await peerConnection.setLocalDescription(offer);
+                    socket.send(JSON.stringify({
+                        type: 'SIGNAL',
+                        signal: { sdp: peerConnection.localDescription }
+                    }));
+                } catch (e) {
+                    console.error(`Negotiation Error:`, e);
+                }
+            };
+
             if (isInitiator) {
-                peerConnection.onnegotiationneeded = async () => {
-                    try {
-                        const offer = await peerConnection.createOffer();
-                        await peerConnection.setLocalDescription(offer);
-                        socket.send(JSON.stringify({
-                            type: 'SIGNAL',
-                            signal: { sdp: peerConnection.localDescription }
-                        }));
-                    } catch (e) {
-                        console.error(`WebRTC Error: Could not create Offer.`, e);
-                        setStatus(`WebRTC Error: Could not create Offer.`, true);
-                    }
-                };
-            }
-            
-             // Manually trigger the first negotiation for the initiator
-            if (isInitiator) {
+                // Manually trigger negotiation for the initiator
                 peerConnection.onnegotiationneeded();
             }
         }
@@ -485,8 +394,8 @@
         async function handleSignal(signal) {
             if (!peerConnection) return;
             
-            if (signal.sdp) {
-                try {
+            try {
+                if (signal.sdp) {
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
                     if (signal.sdp.type === 'offer') {
                         const answer = await peerConnection.createAnswer();
@@ -496,16 +405,11 @@
                             signal: { sdp: peerConnection.localDescription }
                         }));
                     }
-                } catch (e) {
-                    console.error(`WebRTC Error: Could not handle SDP.`, e);
-                    setStatus(`WebRTC Error: Could not handle SDP.`, true);
-                }
-            } else if (signal.candidate) {
-                try {
+                } else if (signal.candidate) {
                     await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
-                } catch (e) {
-                    // Ignore error if SDP is not yet set
                 }
+            } catch (e) {
+                console.error("Signaling Error:", e);
             }
         }
         
@@ -514,130 +418,107 @@
         function resetAllState() {
             closePeerConnection(); 
             stopLocalMedia(); 
-            // Reset internal state and UI to initial voice mode
-            connectionMode = 'voice'; 
-            setMode('voice'); 
+            updateUiForMode('voice'); // Reset UI to default voice mode
             setControls(false); 
+            setStatus('Press Connect to start.');
         }
 
         function connectStranger() {
-            // Immediate cleanup and UI update
-            resetAllState(); 
-            setControls(false, true); 
+            // If already connected, this button means "Find New Stranger"
+            if (!disconnectButton.disabled) {
+                disconnectStranger(); // Disconnect current session first
+            }
+            
+            setControls(false, true); // Disable buttons while connecting
+            setStatus('Connecting to server...');
 
             if (socket && socket.readyState === WebSocket.OPEN) {
                 startConnectRequest();
+            } else {
+                socket = new WebSocket(websocketUrl); 
+                socket.onopen = startConnectRequest;
+                socket.onmessage = handleSocketMessage;
+                socket.onclose = () => {
+                    setStatus('Disconnected from server.');
+                    resetAllState();
+                };
+                socket.onerror = (error) => {
+                    console.error("WebSocket Error:", error);
+                    setStatus('Connection Error.', true);
+                    resetAllState();
+                };
+            }
+        }
+        
+        async function startConnectRequest() {
+            // All connections start with audio only.
+            const mediaReady = await getLocalMedia(false);
+            if (mediaReady) {
+                socket.send(JSON.stringify({ type: 'CONNECT' }));
+                setStatus('Searching for a stranger...');
+            } else {
+                // Media permission was denied.
+                if(socket) socket.close();
+                resetAllState();
+            }
+        }
+
+        function handleSocketMessage(event) {
+            const data = JSON.parse(event.data);
+
+            switch (data.type) {
+                case 'STATUS':
+                    setStatus(data.message);
+                    break;
+                    
+                case 'PAIR_FOUND':
+                    setStatus('Voice chat connected! Video will enable in 60 seconds. 💬');
+                    setControls(true);
+                    startVideoTimer();
+                    createPeerConnection(data.initiator); 
+                    break;
+
+                case 'ENABLE_VIDEO':
+                    handleVideoUpgrade();
+                    break;
+
+                case 'SIGNAL':
+                    handleSignal(data.signal);
+                    break;
+                    
+                case 'DISCONNECTED':
+                    setStatus('Partner disconnected. Press Connect to find a new one.');
+                    resetAllState();
+                    break;
+            }
+        }
+
+        async function handleVideoUpgrade() {
+            setStatus('Video chat enabled! Say hello visually. 🤳');
+            clearVideoTimer();
+
+            // 1. Get new stream with video
+            const videoReady = await getLocalMedia(true);
+            if (!videoReady) {
+                disconnectStranger(); // Disconnect if user denies camera access
                 return;
             }
 
-            setStatus('Connecting to server...');
-            socket = new WebSocket(websocketUrl); 
+            // 2. Update UI
+            updateUiForMode('video');
+            setControls(true); // Re-enable controls for video mode
 
-            socket.onopen = async () => {
-                startConnectRequest();
-            };
-            
-            async function startConnectRequest() {
-                const videoEnabled = connectionMode === 'video';
-                const mediaReady = await startLocalMedia(videoEnabled);
-                
-                if (mediaReady) {
-                    // Only send CONNECT if media is acquired successfully
-                    socket.send(JSON.stringify({ type: 'CONNECT', mode: connectionMode }));
-                    setStatus(`Searching for a stranger in ${connectionMode} mode...`);
-                } else {
-                    // If media fails, close the socket and reset
-                    socket.close(); 
-                    resetAllState();
-                    setStatus('Media access failed. Please grant permission and try again.', true);
+            // 3. Replace track and renegotiate
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (peerConnection && videoTransceiver && videoTrack) {
+                try {
+                    videoTransceiver.direction = "sendrecv"; // Activate the transceiver
+                    await videoTransceiver.sender.replaceTrack(videoTrack);
+                    // onnegotiationneeded will fire automatically to handle the rest
+                } catch (e) {
+                    console.error("Error upgrading to video:", e);
                 }
             }
-
-            socket.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-
-                switch (data.type) {
-                    case 'STATUS':
-                        setStatus(data.message);
-                        break;
-                        
-                    case 'PAIR_FOUND':
-                        // This happens for BOTH initial voice and initial video mode pairings
-                        setStatus('Connection established! Setting up streams...');
-                        setControls(true);
-                        
-                        // Start timer ONLY for voice mode pairing
-                        if (connectionMode === 'voice') {
-                            setStatus('Voice chat connected! Video will enable in 60 seconds. 💬');
-                            startVideoTimer();
-                        } else {
-                             setStatus('Video chat connected! 🤳');
-                             // Show video elements immediately for initial video mode
-                             localVideo.style.display = 'block';
-                             remoteVideo.style.display = 'block';
-                        }
-                        
-                        createPeerConnection(data.initiator); 
-                        break;
-
-                    case 'ENABLE_VIDEO':
-                        setStatus('Video chat enabled! Say hello visually. 🤳');
-                        clearVideoTimer();
-                        
-                        // 1. Update internal state and UI
-                        connectionMode = 'video';
-                        setMode('video'); // This updates UI elements and H1
-                        setControls(true);
-                        
-                        // 2. Request new video stream with camera enabled
-                        startLocalMedia(true).then(success => {
-                            if (success && peerConnection && videoTransceiver) {
-                                const videoTrack = localStream.getVideoTracks()[0];
-                                
-                                if (videoTrack) {
-                                    // CRITICAL: Replace the voice placeholder track with the live video track
-                                    videoTransceiver.sender.replaceTrack(videoTrack)
-                                        .then(() => {
-                                             // 3. Trigger negotiation (onnegotiationneeded) to send the new SDP
-                                            // The initiator check is inside createPeerConnection's handler, 
-                                            // but calling createOffer/setLocalDescription here manually triggers it if needed.
-                                            return peerConnection.createOffer();
-                                        })
-                                        .then(offer => peerConnection.setLocalDescription(offer))
-                                        .then(() => {
-                                             // Send the new Offer with video capability
-                                            socket.send(JSON.stringify({
-                                                type: 'SIGNAL',
-                                                signal: { sdp: peerConnection.localDescription }
-                                            }));
-                                        })
-                                        .catch(e => console.error("Error during video negotiation:", e));
-                                }
-                            }
-                        });
-
-                        break;
-
-                    case 'SIGNAL':
-                        handleSignal(data.signal);
-                        break;
-                        
-                    case 'DISCONNECTED':
-                        setStatus('Partner disconnected. Press Connect to find a new one.');
-                        resetAllState();
-                        break;
-                }
-            };
-
-            socket.onclose = () => {
-                setStatus('Disconnected from server. Press Connect to start.');
-                resetAllState();
-            };
-
-            socket.onerror = (error) => {
-                setStatus('Connection Error. Check console.', true);
-                resetAllState();
-            };
         }
 
         function disconnectStranger() {
@@ -649,9 +530,9 @@
         }
         
         // Initial setup on page load
-        setMode('voice');
-        setControls(false);
-        clearVideoTimer();
+        window.onload = () => {
+            resetAllState();
+        };
     </script>
 </body>
 </html>

@@ -1,16 +1,19 @@
 {
-  "name": "speakapp",
+  "name": "stranger-connect",
   "version": "1.0.0",
-  "description": "",
+  "description": "A WebRTC stranger connect app",
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
-  "author": "",
+  "author": "Aman",
   "license": "ISC",
   "dependencies": {
-    "express": "^5.1.0",
-    "ws": "^8.18.3"
+    "express": "^4.18.2",
+    "ws": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

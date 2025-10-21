@@ -13,20 +13,15 @@ const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Serve static files (Assuming client code is saved as 'public/index.html')
-// NOTE: Make sure your index.html is in a folder named 'public'
+// Serve static files from a 'public' folder
 app.use(express.static(path.join(__dirname, 'public')));
-
 
 // ----------------------------------------------------------------
 // WebRTC Signaling & Stranger Pairing Logic
 // ----------------------------------------------------------------
 
-// Stores { mode: [{ ws: WebSocket, mode: 'voice'|'video' }, ...] }
-const pendingUsers = {
-    voice: [],
-    video: []
-};
+// All users wait in a single queue. All connections start as voice chats.
+const pendingUsers = []; 
 // Stores { ws1: ws2, ws2: ws1 }
 const pairedConnections = new Map(); 
 // Stores { ws: timerReference } for the 60-second video enablement timer
@@ -52,12 +47,13 @@ function sendMessageToClient(ws, type, payload) {
 function enableVideoModeForPair(ws1, ws2) {
     // Check if the pair is still connected before sending
     if (pairedConnections.get(ws1) === ws2) {
-        // CRITICAL: Send the ENABLE_VIDEO signal to trigger client-side track replacement and renegotiation
+        // CRITICAL: Send the ENABLE_VIDEO signal to trigger client-side track replacement
         sendMessageToClient(ws1, 'ENABLE_VIDEO', { message: 'Video chat enabled! Say hello visually. 🤳' });
         sendMessageToClient(ws2, 'ENABLE_VIDEO', { message: 'Video chat enabled! Say hello visually. 🤳' });
+        console.log("Sent ENABLE_VIDEO signal to a pair.");
     }
     
-    // Clean up the timer references
+    // Clean up the timer references regardless
     const timer = videoTimers.get(ws1);
     if (timer) {
         clearTimeout(timer);
@@ -67,22 +63,21 @@ function enableVideoModeForPair(ws1, ws2) {
 }
 
 /**
- * Attempts to find a waiting client in the specified mode and connect them, 
- * or adds the client to the waiting list.
+ * Attempts to find a waiting client and connect them, or adds the client to the waiting list.
  */
-function attemptToPair(client) {
-    const { ws, mode } = client;
-    const queue = pendingUsers[mode];
-    
-    // 1. Clean the queue by filtering out closed or paired sockets
-    pendingUsers[mode] = queue.filter(c => 
-        c.ws.readyState === c.ws.OPEN && !pairedConnections.has(c.ws)
+function attemptToPair(ws) {
+    // 1. Clean the queue by filtering out closed or already paired sockets
+    const availableUsers = pendingUsers.filter(user => 
+        user.readyState === user.OPEN && !pairedConnections.has(user)
     );
     
     // 2. Look for a partner
-    if (pendingUsers[mode].length > 0) {
-        const partnerClient = pendingUsers[mode].shift();
-        const partner = partnerClient.ws;
+    if (availableUsers.length > 0) {
+        const partner = availableUsers.shift(); // Get the first waiting user
+        
+        // Remove the newly found partner from the main pendingUsers array
+        const partnerIndex = pendingUsers.findIndex(u => u === partner);
+        if (partnerIndex > -1) pendingUsers.splice(partnerIndex, 1);
         
         // Match found!
         pairedConnections.set(ws, partner);
@@ -94,25 +89,20 @@ function attemptToPair(client) {
         sendMessageToClient(ws, 'PAIR_FOUND', { initiator: initiator }); 
         sendMessageToClient(partner, 'PAIR_FOUND', { initiator: !initiator });
         
-        console.log(`Paired client in ${mode} mode.`);
+        console.log(`Paired two clients.`);
         
-        // Start the 60-second timer ONLY for 'voice' mode
-        if (mode === 'voice') {
-            const timer = setTimeout(() => {
-                enableVideoModeForPair(ws, partner);
-            }, VIDEO_ENABLE_DELAY_MS);
-            
-            videoTimers.set(ws, timer);
-            videoTimers.set(partner, timer);
-        }
+        // Start the 60-second timer for this new voice-only pair
+        const timer = setTimeout(() => {
+            enableVideoModeForPair(ws, partner);
+        }, VIDEO_ENABLE_DELAY_MS);
+        
+        videoTimers.set(ws, timer);
+        videoTimers.set(partner, timer);
 
     } else {
         // 3. No one is waiting, so this client waits.
-        const existingIndex = pendingUsers[mode].findIndex(c => c.ws === ws);
-        if (existingIndex === -1) {
-            pendingUsers[mode].push(client);
-        }
-        sendMessageToClient(ws, 'STATUS', { message: `Searching for a stranger in ${mode} mode...` });
+        pendingUsers.push(ws);
+        sendMessageToClient(ws, 'STATUS', { message: `Searching for a stranger...` });
     }
 }
 
@@ -122,35 +112,32 @@ function attemptToPair(client) {
 function disconnectPair(ws, shouldRequeuePartner) {
     const partner = pairedConnections.get(ws);
     
-    // 1. TIMER CLEANUP: Clear the timer
+    // 1. TIMER CLEANUP: Clear any associated timer
     const timer = videoTimers.get(ws);
     if (timer) {
         clearTimeout(timer);
         videoTimers.delete(ws);
-        if (partner) {
-            videoTimers.delete(partner);
-        }
+        if (partner) videoTimers.delete(partner);
     }
     
     // 2. Partner cleanup
     if (partner) {
-        // Notify partner to clean up their state
         sendMessageToClient(partner, 'DISCONNECTED', { message: 'Your partner disconnected.' });
         
         pairedConnections.delete(ws);
         pairedConnections.delete(partner);
         
         if (shouldRequeuePartner && partner.readyState === partner.OPEN) {
-            // Requeue partner for a new match (assuming 'voice' mode for simplicity)
-            // A more complex system would store the partner's preferred mode
-            const partnerClientObj = { ws: partner, mode: 'voice' }; 
-            attemptToPair(partnerClientObj); 
+            // Requeue partner for a new match
+            console.log("Partner is being re-queued.");
+            attemptToPair(partner); 
         }
     }
 
-    // 3. Cleanup from pending queues (in case they were waiting)
-    for (const mode of ['voice', 'video']) {
-        pendingUsers[mode] = pendingUsers[mode].filter(c => c.ws !== ws);
+    // 3. Cleanup from pending queue (in case they were waiting)
+    const pendingIndex = pendingUsers.findIndex(user => user === ws);
+    if (pendingIndex > -1) {
+        pendingUsers.splice(pendingIndex, 1);
     }
 }
 
@@ -163,6 +150,7 @@ wss.on('connection', function connection(ws) {
         try {
             data = JSON.parse(message);
         } catch (e) {
+            console.error("Invalid JSON received:", message);
             return;
         }
 
@@ -171,34 +159,27 @@ wss.on('connection', function connection(ws) {
                 const partner = pairedConnections.get(ws);
                 if (partner) {
                     sendMessageToClient(partner, 'SIGNAL', { signal: data.signal });
-                } else {
-                    // This indicates an issue, so clean up the client's state
-                    disconnectPair(ws, false); 
-                    sendMessageToClient(ws, 'STATUS', { message: 'Signaling failed: You are not paired.' });
                 }
                 break;
 
             case 'DISCONNECT':
-                // Client initiated manual disconnect
+                // Client initiated a manual disconnect
                 disconnectPair(ws, false); 
-                sendMessageToClient(ws, 'STATUS', { message: 'Disconnected. Press Connect for a new stranger.' });
                 break;
 
             case 'CONNECT':
-                // A new connection attempt is made (or mode switch)
-                const newMode = data.mode === 'video' ? 'video' : 'voice'; 
-                
-                // 1. Clean up any existing pairing or queue state
+                // A new connection attempt is made (e.g., "Find New Stranger")
+                // 1. Clean up any existing pairing or queue state for this user
                 disconnectPair(ws, false); 
                 
-                // 2. Attempt to pair in the new mode
-                const clientObj = { ws: ws, mode: newMode };
-                attemptToPair(clientObj);
+                // 2. Attempt to pair the user
+                attemptToPair(ws);
                 break;
         }
     });
 
     ws.on('close', function close() {
+        console.log("Client disconnected from websocket.");
         // Client closed the tab/browser - requeue partner if they exist
         disconnectPair(ws, true); 
     });
@@ -211,6 +192,5 @@ wss.on('connection', function connection(ws) {
 });
 
 server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`Open http://localhost:${PORT} in your browser.`);
+    console.log(`Server running on http://localhost:${PORT}`);
 });
