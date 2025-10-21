@@ -6,543 +6,287 @@
     <title>Stranger Connect</title>
     <style>
         :root {
-            --primary-color: #007bff;
-            --secondary-color: #6c757d;
-            --success-color: #28a745;
-            --danger-color: #dc3545;
-            --bg-color: #f8f9fa;
-            --card-bg: #ffffff;
-            --text-color: #343a40;
-            --note-bg: #fff3cd; 
-            --note-text: #856404; 
-            --toggle-bg: #e9ecef;
-            --toggle-active: var(--primary-color);
-            --timer-bg: #f0ad4e; /* Warning color for countdown */
+            --primary-color: #007bff; --secondary-color: #6c757d; --success-color: #28a745;
+            --danger-color: #dc3545; --bg-color: #f8f9fa; --card-bg: #ffffff;
+            --text-color: #343a40; --note-bg: #fff3cd; --note-text: #856404;
+            --toggle-bg: #e9ecef; --toggle-active: var(--primary-color); --timer-bg: #f0ad4e;
         }
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            max-width: 450px; 
-            margin: 50px auto; 
-            padding: 20px; 
-            background-color: var(--bg-color); 
-            color: var(--text-color);
-            text-align: center;
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 450px;
+            margin: 50px auto; padding: 20px; background-color: var(--bg-color);
+            color: var(--text-color); text-align: center;
         }
         .container {
-            position: relative; 
-            background-color: var(--card-bg);
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            position: relative; background-color: var(--card-bg); padding: 30px;
+            border-radius: 12px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
-        h1 { 
-            color: var(--primary-color); 
-            margin-bottom: 20px;
-            font-size: 1.8em;
-        }
-        
-        /* --- TIMER STYLES --- */
+        h1 { color: var(--primary-color); margin-bottom: 20px; font-size: 1.8em; }
         #timerContainer {
-            position: absolute;
-            top: 15px;
-            right: 15px;
-            background-color: var(--timer-bg);
-            color: white;
-            padding: 5px 12px;
-            border-radius: 8px;
-            font-weight: bold;
-            font-size: 1.1em;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            display: none; /* Hidden by default */
+            position: absolute; top: 15px; right: 15px; background-color: var(--timer-bg);
+            color: white; padding: 5px 12px; border-radius: 8px; font-weight: bold;
+            font-size: 1.1em; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); display: none;
         }
-
-        /* --- TOGGLE SWITCH STYLES --- */
         .mode-toggle {
-            display: flex;
-            justify-content: center;
-            margin-bottom: 25px;
-            background-color: var(--toggle-bg);
-            border-radius: 8px;
-            padding: 5px;
+            display: flex; justify-content: center; margin-bottom: 25px;
+            background-color: var(--toggle-bg); border-radius: 8px; padding: 5px;
         }
         .mode-toggle button {
-            flex-grow: 1;
-            padding: 10px;
-            border: none;
-            border-radius: 6px;
-            background: transparent;
-            color: var(--secondary-color);
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
+            flex-grow: 1; padding: 10px; border: none; border-radius: 6px; background: transparent;
+            color: var(--secondary-color); font-weight: 600; cursor: pointer; transition: all 0.2s ease;
         }
         .mode-toggle button.active {
-            background-color: var(--toggle-active);
-            color: white;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            background-color: var(--toggle-active); color: white; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
-        .mode-toggle button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            color: #999;
+        .mode-toggle button:disabled { opacity: 0.6; cursor: not-allowed; color: #999; }
+        #status {
+            font-weight: 600; margin-bottom: 25px; padding: 15px; border-radius: 8px; font-size: 1.1em;
+            background-color: #e9ecef; color: var(--secondary-color); transition: all 0.3s ease;
         }
-
-        /* --- STATUS, CONTROLS, ETC. --- */
-        #status { 
-            font-weight: 600; 
-            margin-bottom: 25px; 
-            padding: 15px; 
-            border-radius: 8px; 
-            font-size: 1.1em;
-            background-color: #e9ecef;
-            color: var(--secondary-color);
-            transition: all 0.3s ease;
+        .controls {
+            display: flex; justify-content: space-around; gap: 15px; margin-bottom: 25px;
         }
-        .controls { 
-            display: flex;
-            justify-content: space-around;
-            gap: 15px;
-            margin-bottom: 25px;
+        .controls button {
+            flex-grow: 1; padding: 15px; border: none; border-radius: 8px; cursor: pointer; font-size: 1em;
+            font-weight: bold; transition: all 0.3s ease; text-transform: uppercase; letter-spacing: 0.5px;
         }
-        .controls button { 
-            flex-grow: 1;
-            padding: 15px; 
-            border: none; 
-            border-radius: 8px; 
-            cursor: pointer; 
-            font-size: 1em; 
-            font-weight: bold; 
-            transition: all 0.3s ease; 
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        #connectButton { 
-            background-color: var(--success-color); 
-            color: white; 
-        }
-        #connectButton:disabled {
-            background-color: #a5d6a7;
-            cursor: not-allowed;
-        }
-        #disconnectButton { 
-            background-color: var(--danger-color); 
-            color: white; 
-        }
-        #disconnectButton:disabled { 
-            background-color: #f8d7da; 
-            color: #a0a0a0; 
-            cursor: not-allowed; 
-        }
-        
-        /* --- VIDEO ELEMENTS --- */
+        #connectButton { background-color: var(--success-color); color: white; }
+        #connectButton:disabled { background-color: #a5d6a7; cursor: not-allowed; }
+        #disconnectButton { background-color: var(--danger-color); color: white; }
+        #disconnectButton:disabled { background-color: #f8d7da; color: #a0a0a0; cursor: not-allowed; }
         #localVideo, #remoteVideo {
-            width: 100%;
-            max-width: 400px;
-            height: auto;
-            border-radius: 8px;
-            background-color: #000;
-            margin-bottom: 20px;
-            display: none; 
+            width: 100%; max-width: 400px; height: auto; border-radius: 8px;
+            background-color: #000; margin-bottom: 20px; display: none;
         }
-        #remoteAudio { 
-            display: none; 
-        }
-        
-        /* --- MOBILE NOTE STYLES --- */
-        .mobile-note {
-            text-align: left;
-            padding: 15px;
-            margin-top: 20px;
-            border-radius: 8px;
-            background-color: var(--note-bg);
-            color: var(--note-text);
-            border: 1px solid #ffeeba;
-            font-size: 0.9em;
-        }
-        .mobile-note p { margin: 0; font-weight: bold; }
-        .mobile-note ul { list-style-type: disc; margin-top: 5px; padding-left: 20px; }
-        .mobile-note li { margin-bottom: 5px; }
-
+        #remoteAudio { display: none; }
     </style>
 </head>
 <body>
-
     <div class="container">
         <h1 id="mainTitle">Stranger Connect 💬</h1>
-        
         <div id="timerContainer">Video in: <span id="timerDisplay">60</span>s</div>
-
         <div class="mode-toggle">
             <button id="voiceButton" class="active">Voice Only 🎙️</button>
             <button id="videoButton" disabled>Video Chat 🤳</button>
         </div>
-
         <video id="localVideo" autoplay muted playsinline></video>
         <video id="remoteVideo" autoplay playsinline></video>
-        <audio id="remoteAudio" autoplay></audio> 
-
+        <audio id="remoteAudio" autoplay></audio>
         <div id="status">Press Connect to start.</div>
-
         <div class="controls">
             <button onclick="connectStranger()" id="connectButton">Connect</button>
             <button onclick="disconnectStranger()" id="disconnectButton" disabled>Disconnect</button>
         </div>
-
-        <div class="mobile-note">
-            <p>Video Policy:</p>
-            <ul>
-                <li>Connections always start as **voice-only**.</li>
-                <li>**Video chat will automatically enable after 60 seconds** of a successful connection.</li>
-            </ul>
-        </div>
     </div>
 
     <script>
-        // --- Globals ---
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const host = window.location.host;
-        const websocketUrl = `${protocol}://${host}`; 
-        
+        const websocketUrl = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
+        const statusElement = document.getElementById('status');
+        const timerContainer = document.getElementById('timerContainer');
+        const timerDisplay = document.getElementById('timerDisplay');
+        const connectButton = document.getElementById('connectButton');
+        const disconnectButton = document.getElementById('disconnectButton');
+        const remoteAudio = document.getElementById('remoteAudio');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const localVideo = document.getElementById('localVideo');
+        const voiceButton = document.getElementById('voiceButton');
+        const videoButton = document.getElementById('videoButton');
+
         let socket = null;
         let peerConnection = null;
         let localStream = null;
-        let connectionMode = 'voice'; // Always starts as 'voice'
-        let videoTimer = null; 
-        let videoTransceiver = null; // Stores the video transceiver for track replacement
-        const VIDEO_DELAY_SECONDS = 60; 
-
-        // --- DOM Elements ---
-        const statusElement = document.getElementById('status');
-        const disconnectButton = document.getElementById('disconnectButton');
-        const connectButton = document.getElementById('connectButton');
-        const remoteAudio = document.getElementById('remoteAudio');
-        const localVideo = document.getElementById('localVideo');
-        const remoteVideo = document.getElementById('remoteVideo');
-        const voiceButton = document.getElementById('voiceButton');
-        const videoButton = document.getElementById('videoButton');
-        const timerContainer = document.getElementById('timerContainer'); 
-        const timerDisplay = document.getElementById('timerDisplay');
-        const mainTitle = document.getElementById('mainTitle');   
-
-        const ICE_SERVERS = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' }, 
-            ]
-        };
-        
-        // --- UI Control Functions ---
-
-        /** Updates UI elements based on the current mode. */
-        function updateUiForMode(mode) {
-            connectionMode = mode;
-            voiceButton.classList.remove('active');
-            videoButton.classList.remove('active');
-            
-            if (mode === 'voice') {
-                voiceButton.classList.add('active');
-                localVideo.style.display = 'none';
-                remoteVideo.style.display = 'none';
-                mainTitle.textContent = 'Stranger Voice Connect 🎙️';
-            } else { // mode === 'video'
-                videoButton.classList.add('active');
-                localVideo.style.display = 'block';
-                remoteVideo.style.display = 'block';
-                mainTitle.textContent = 'Stranger Video Connect 🤳';
-            }
-        }
-
-        function setStatus(text, isError = false) {
-            statusElement.textContent = text;
-            statusElement.style.backgroundColor = isError ? '#f8d7da' : (text.includes('Connected') ? '#d4edda' : '#e9ecef');
-            statusElement.style.color = isError ? '#721c24' : (text.includes('Connected') ? '#155724' : '#6c757d');
-        }
-
-        /** Controls button states based on connection status. */
-        function setControls(isPaired, isConnecting = false) {
-            disconnectButton.disabled = !isPaired;
-            connectButton.disabled = isConnecting;
-            connectButton.textContent = isPaired ? 'Find New Stranger' : 'Connect';
-            
-            // Video button is ONLY enabled when paired AND in video mode.
-            videoButton.disabled = !(isPaired && connectionMode === 'video');
-        }
-
-        // --- TIMER LOGIC ---
-
-        function clearVideoTimer() {
-            if (videoTimer) {
-                clearInterval(videoTimer);
-                videoTimer = null;
-            }
-            timerContainer.style.display = 'none';
-            timerDisplay.textContent = VIDEO_DELAY_SECONDS; 
-        }
-
-        function startVideoTimer() {
-            clearVideoTimer(); 
-            let remaining = VIDEO_DELAY_SECONDS;
-            timerDisplay.textContent = remaining;
-            timerContainer.style.display = 'block';
-
-            videoTimer = setInterval(() => {
-                remaining--;
-                if (remaining >= 0) {
-                    timerDisplay.textContent = remaining;
-                }
-                if (remaining <= 0) {
-                    clearInterval(videoTimer); 
-                    videoTimer = null;
-                }
-            }, 1000);
-        }
-
-        // --- WebRTC/Media Logic ---
-        
-        /** Acquires local media stream. */
-        async function getLocalMedia(videoEnabled) {
-            if (localStream) {
-                stopLocalMedia();
-            }
-            try {
-                const constraints = { audio: true, video: videoEnabled };
-                localStream = await navigator.mediaDevices.getUserMedia(constraints);
-                if (videoEnabled) {
-                    localVideo.srcObject = localStream;
-                }
-                return true;
-            } catch (e) {
-                console.error("Error accessing media devices:", e);
-                setStatus(`Error: ${videoEnabled ? 'Camera/Mic' : 'Microphone'} access is required.`, true);
-                return false;
-            }
-        }
-        
-        function stopLocalMedia() {
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
-            if (localVideo.srcObject) localVideo.srcObject = null;
-        }
-
-        function closePeerConnection() {
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-                videoTransceiver = null;
-            }
-            [remoteAudio, remoteVideo].forEach(el => {
-                if (el.srcObject) {
-                    el.srcObject.getTracks().forEach(track => track.stop());
-                    el.srcObject = null;
-                }
-            });
-            clearVideoTimer(); 
-        }
-        
-        function createPeerConnection(isInitiator) {
-            if (!localStream) return;
-            closePeerConnection();
-
-            peerConnection = new RTCPeerConnection(ICE_SERVERS);
-            
-            localStream.getAudioTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-            videoTransceiver = peerConnection.addTransceiver('video', { direction: 'inactive' });
-            
-            peerConnection.ontrack = (event) => {
-                console.log("Received remote track:", event.track.kind);
-                const stream = event.streams[0];
-                if (event.track.kind === 'audio') {
-                    remoteAudio.srcObject = stream;
-                } else if (event.track.kind === 'video') {
-                    remoteVideo.srcObject = stream;
-                }
-            };
-            
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate && socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send(JSON.stringify({
-                        type: 'SIGNAL',
-                        signal: { candidate: event.candidate }
-                    }));
-                }
-            };
-            
-            peerConnection.onnegotiationneeded = async () => {
-                console.log("Negotiation needed...");
-                try {
-                    await peerConnection.setLocalDescription(await peerConnection.createOffer());
-                    socket.send(JSON.stringify({
-                        type: 'SIGNAL',
-                        signal: { sdp: peerConnection.localDescription }
-                    }));
-                } catch (e) {
-                    console.error(`Negotiation Error:`, e);
-                }
-            };
-
-            if (isInitiator) {
-                peerConnection.onnegotiationneeded();
-            }
-        }
-
-        async function handleSignal(signal) {
-            if (!peerConnection) return;
-            
-            try {
-                if (signal.sdp) {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-                    if (signal.sdp.type === 'offer') {
-                        await peerConnection.setLocalDescription(await peerConnection.createAnswer());
-                        socket.send(JSON.stringify({
-                            type: 'SIGNAL',
-                            signal: { sdp: peerConnection.localDescription }
-                        }));
-                    }
-                } else if (signal.candidate) {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
-                }
-            } catch (e) {
-                console.error("Signaling Error:", e);
-            }
-        }
-        
-        // --- WebSocket Logic ---
-
-        function resetAllState() {
-            closePeerConnection(); 
-            stopLocalMedia(); 
-            updateUiForMode('voice');
-            setControls(false); 
-            setStatus('Press Connect to start.');
-        }
+        let videoTimer = null;
+        let videoTransceiver = null;
 
         function connectStranger() {
-            if (!disconnectButton.disabled) {
-                disconnectStranger(); 
-            }
-            
+            if (socket && socket.readyState === WebSocket.OPEN) disconnectStranger();
             setControls(false, true);
             setStatus('Connecting to server...');
-
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                startConnectRequest();
-            } else {
-                socket = new WebSocket(websocketUrl); 
-                socket.onopen = startConnectRequest;
-                socket.onmessage = handleSocketMessage;
-                socket.onclose = () => {
-                    setStatus('Disconnected from server.');
-                    resetAllState();
-                };
-                socket.onerror = (error) => {
-                    console.error("WebSocket Error:", error);
-                    setStatus('Connection Error.', true);
-                    resetAllState();
-                };
-            }
+            socket = new WebSocket(websocketUrl);
+            socket.onopen = onSocketOpen;
+            socket.onmessage = onSocketMessage;
+            socket.onclose = () => resetAllState('Disconnected from server.');
+            socket.onerror = () => resetAllState('Connection Error.', true);
         }
-        
-        async function startConnectRequest() {
-            const mediaReady = await getLocalMedia(false); // Always start with audio only
+
+        async function onSocketOpen() {
+            console.log("WebSocket connected. Getting local media...");
+            const mediaReady = await getLocalMedia(false);
             if (mediaReady) {
                 socket.send(JSON.stringify({ type: 'CONNECT' }));
                 setStatus('Searching for a stranger...');
             } else {
-                if(socket) socket.close();
-                resetAllState();
+                if (socket) socket.close();
+                resetAllState('Media access failed. Please grant permission.', true);
             }
         }
 
-        function handleSocketMessage(event) {
+        function onSocketMessage(event) {
             const data = JSON.parse(event.data);
+            console.log("SERVER MSG:", data); // Check your browser console for this!
 
             switch (data.type) {
-                case 'STATUS':
-                    setStatus(data.message);
-                    break;
-                    
-                case 'PAIR_FOUND':
-                    console.log("Pair found! Initiator:", data.initiator);
-                    setStatus('Voice chat connected! Video will enable in 60 seconds. 💬');
-                    setControls(true);
-                    startVideoTimer();
-                    createPeerConnection(data.initiator); 
-                    break;
-
-                case 'ENABLE_VIDEO':
-                    console.log("Received ENABLE_VIDEO signal from server.");
-                    handleVideoUpgrade();
-                    break;
-
-                case 'SIGNAL':
-                    handleSignal(data.signal);
-                    break;
-                    
-                case 'DISCONNECTED':
-                    setStatus('Partner disconnected. Press Connect to find a new one.');
-                    resetAllState();
-                    break;
+                case 'STATUS': setStatus(data.message); break;
+                case 'PAIR_FOUND': handlePairFound(data.initiator); break;
+                case 'ENABLE_VIDEO': handleVideoUpgrade(); break;
+                case 'SIGNAL': handleSignal(data.signal); break;
+                case 'DISCONNECTED': resetAllState('Partner disconnected.'); break;
             }
         }
 
-        // ==========================================================
-        // KEY FIX: This function is updated for robust video upgrade
-        // ==========================================================
-        async function handleVideoUpgrade() {
-            setStatus('Enabling video... Please approve camera access.');
-            clearVideoTimer();
+        function handlePairFound(isInitiator) {
+            setStatus('Voice chat connected! 💬');
+            setControls(true);
+            startVideoTimer();
+            createPeerConnection(isInitiator);
+        }
 
-            const videoReady = await getLocalMedia(true);
-            if (!videoReady) {
-                setStatus("Camera access denied. Disconnecting.", true);
+        function createPeerConnection(isInitiator) {
+            closePeerConnection();
+            peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            
+            videoTransceiver = peerConnection.addTransceiver('video', { direction: 'inactive' });
+
+            peerConnection.ontrack = (event) => {
+                console.log(`Remote track received: ${event.track.kind}`);
+                const [stream] = event.streams;
+                if (event.track.kind === 'audio') {
+                    remoteAudio.srcObject = stream;
+                    remoteAudio.play().catch(e => console.error("Remote audio autoplay failed:", e));
+                }
+                if (event.track.kind === 'video') {
+                    remoteVideo.srcObject = stream;
+                    remoteVideo.play().catch(e => console.error("Remote video autoplay failed:", e));
+                }
+            };
+
+            peerConnection.onicecandidate = ({ candidate }) => {
+                if (candidate) socket.send(JSON.stringify({ type: 'SIGNAL', signal: { candidate } }));
+            };
+
+            if (isInitiator) {
+                peerConnection.onnegotiationneeded = async () => {
+                    try {
+                        const offer = await peerConnection.createOffer();
+                        await peerConnection.setLocalDescription(offer);
+                        socket.send(JSON.stringify({ type: 'SIGNAL', signal: { sdp: peerConnection.localDescription } }));
+                    } catch (e) { console.error("Offer creation failed:", e); }
+                };
+            }
+        }
+
+        async function handleSignal({ sdp, candidate }) {
+            try {
+                if (sdp) {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
+                    if (sdp.type === 'offer') {
+                        const answer = await peerConnection.createAnswer();
+                        await peerConnection.setLocalDescription(answer);
+                        socket.send(JSON.stringify({ type: 'SIGNAL', signal: { sdp: peerConnection.localDescription } }));
+                    }
+                } else if (candidate) {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                }
+            } catch (e) { console.error("Signaling error:", e); }
+        }
+
+        async function handleVideoUpgrade() {
+            clearVideoTimer();
+            setStatus('Enabling video... Please approve camera access.');
+
+            const mediaReady = await getLocalMedia(true);
+            if (!mediaReady) {
                 disconnectStranger();
                 return;
             }
-            
-            updateUiForMode('video');
-            setControls(true);
 
             const videoTrack = localStream.getVideoTracks()[0];
-            if (peerConnection && videoTransceiver && videoTrack) {
+            if (videoTrack && videoTransceiver) {
                 try {
-                    console.log("Replacing track and activating video transceiver.");
-                    videoTransceiver.direction = "sendrecv";
+                    videoTransceiver.direction = 'sendrecv';
                     await videoTransceiver.sender.replaceTrack(videoTrack);
                     
-                    // -- EXPLICIT RENEGOTIATION --
-                    // This forces the creation of a new offer with video enabled.
-                    console.log("Creating new offer for video upgrade...");
+                    // Explicit renegotiation for robustness
                     const offer = await peerConnection.createOffer();
                     await peerConnection.setLocalDescription(offer);
-                    
-                    if (socket && socket.readyState === WebSocket.OPEN) {
-                        socket.send(JSON.stringify({
-                            type: 'SIGNAL',
-                            signal: { sdp: peerConnection.localDescription }
-                        }));
-                        setStatus('Video chat connected! 🤳');
-                    }
-                } catch (e) {
+                    socket.send(JSON.stringify({ type: 'SIGNAL', signal: { sdp: peerConnection.localDescription } }));
+                    updateUiForVideo();
+                } catch(e) {
                     console.error("Error upgrading to video:", e);
-                    setStatus("Failed to enable video.", true);
-                    disconnectStranger();
+                    resetAllState("Failed to enable video.", true);
                 }
             }
+        }
+
+        function startVideoTimer() {
+            timerContainer.style.display = 'block';
+            let remaining = 60;
+            timerDisplay.textContent = remaining;
+            videoTimer = setInterval(() => {
+                remaining--;
+                timerDisplay.textContent = Math.max(0, remaining);
+                if (remaining <= 0) clearInterval(videoTimer);
+            }, 1000);
+        }
+
+        async function getLocalMedia(videoEnabled) {
+            stopLocalMedia();
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: videoEnabled });
+                if (videoEnabled) localVideo.srcObject = localStream;
+                return true;
+            } catch (e) { return false; }
+        }
+
+        function updateUiForVideo() {
+            voiceButton.classList.remove('active');
+            videoButton.classList.add('active');
+            videoButton.disabled = false;
+            localVideo.style.display = 'block';
+            remoteVideo.style.display = 'block';
+            setStatus('Video chat connected! 🤳');
+        }
+        
+        function setControls(isPaired, isConnecting = false) {
+            disconnectButton.disabled = !isPaired;
+            connectButton.disabled = isConnecting;
+            connectButton.textContent = isPaired ? 'Find New Stranger' : 'Connect';
+        }
+
+        function resetAllState(message, isError = false) {
+            if (message) setStatus(message, isError);
+            closePeerConnection();
+            stopLocalMedia();
+            clearVideoTimer();
+            setControls(false);
+            voiceButton.classList.add('active');
+            videoButton.classList.remove('active');
+            videoButton.disabled = true;
+            localVideo.style.display = 'none';
+            remoteVideo.style.display = 'none';
         }
 
         function disconnectStranger() {
             if (socket && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ type: 'DISCONNECT' }));
             }
-            setStatus('You disconnected. Press Connect to find a new stranger.');
-            resetAllState();
+            resetAllState('You disconnected.');
+        }
+
+        function stopLocalMedia() {
+            if (localStream) localStream.getTracks().forEach(track => track.stop());
+        }
+
+        function closePeerConnection() {
+            if (peerConnection) peerConnection.close();
         }
         
-        window.onload = () => {
-            resetAllState();
-        };
+        function clearVideoTimer(){
+            if(videoTimer) clearInterval(videoTimer);
+            timerContainer.style.display = 'none';
+        }
+
     </script>
 </body>
 </html>
