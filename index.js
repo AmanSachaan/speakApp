@@ -1,196 +1,173 @@
-import express from 'express';
-import http from 'http';
-import { WebSocketServer } from 'ws'; 
-import path from 'path';
-import { fileURLToPath } from 'url';
+// index.js
 
-// Standard setup for ES Modules to get __dirname
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
+const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
 
-// Serve static files from a 'public' folder
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+// Serve the static HTML file (Frontend) from the 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ----------------------------------------------------------------
-// WebRTC Signaling & Stranger Pairing Logic
+// Stranger Connect Logic
 // ----------------------------------------------------------------
 
-// All users wait in a single queue. All connections start as voice chats.
-const pendingUsers = []; 
-// Stores { ws1: ws2, ws2: ws1 }
-const pairedConnections = new Map(); 
-// Stores { ws: timerReference } for the 60-second video enablement timer
-const videoTimers = new Map(); 
-const VIDEO_ENABLE_DELAY_MS = 60000; // 60 seconds
+const waitingClients = [];
+const pairs = new Map();
 
 /**
  * Sends a JSON message to a client.
+ * @param {WebSocket} ws - The target client's WebSocket
+ * @param {string} type - The type of message (STATUS, DISCONNECTED, OFFER, ANSWER, CANDIDATE)
+ * @param {object | string} data - The content of the message (string for STATUS, object for WebRTC data)
  */
-function sendMessageToClient(ws, type, payload) {
-    if (ws && ws.readyState === ws.OPEN) {
-        try {
-            ws.send(JSON.stringify({ type, ...payload }));
-        } catch (e) {
-            console.error("Error sending message to client:", e.message);
-        }
-    }
-}
-
-/**
- * Executes the logic to enable video mode for an established pair.
- */
-function enableVideoModeForPair(ws1, ws2) {
-    // Check if the pair is still connected before sending
-    if (pairedConnections.get(ws1) === ws2) {
-        // CRITICAL: Send the ENABLE_VIDEO signal to trigger client-side track replacement
-        sendMessageToClient(ws1, 'ENABLE_VIDEO', { message: 'Video chat enabled! Say hello visually. 🤳' });
-        sendMessageToClient(ws2, 'ENABLE_VIDEO', { message: 'Video chat enabled! Say hello visually. 🤳' });
-        console.log("Sent ENABLE_VIDEO signal to a pair.");
-    }
-    
-    // Clean up the timer references regardless
-    const timer = videoTimers.get(ws1);
-    if (timer) {
-        clearTimeout(timer);
-        videoTimers.delete(ws1);
-        videoTimers.delete(ws2);
+function sendMessageToClient(ws, type, data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const message = typeof data === 'string' ? { message: data } : data;
+        ws.send(JSON.stringify({ type, ...message }));
     }
 }
 
 /**
  * Attempts to find a waiting client and connect them, or adds the client to the waiting list.
+ * NOTE: The 'client' object here is the WebSocket connection.
  */
 function attemptToPair(ws) {
-    // 1. Clean the queue by filtering out closed or already paired sockets
-    const availableUsers = pendingUsers.filter(user => 
-        user.readyState === user.OPEN && !pairedConnections.has(user)
-    );
-    
-    // 2. Look for a partner
-    if (availableUsers.length > 0) {
-        const partner = availableUsers.shift(); // Get the first waiting user
-        
-        // Remove the newly found partner from the main pendingUsers array
-        const partnerIndex = pendingUsers.findIndex(u => u === partner);
-        if (partnerIndex > -1) pendingUsers.splice(partnerIndex, 1);
-        
+    // 1. Clean up stale/closed clients from the waiting list
+    for (let i = waitingClients.length - 1; i >= 0; i--) {
+        if (waitingClients[i].readyState !== WebSocket.OPEN) {
+            waitingClients.splice(i, 1);
+        }
+    }
+
+    if (waitingClients.length > 0) {
         // Match found!
-        pairedConnections.set(ws, partner);
-        pairedConnections.set(partner, ws);
+        const partner = waitingClients.shift();
         
-        // Use random initiator for balanced negotiation load
-        const initiator = Math.random() < 0.5;
-
-        sendMessageToClient(ws, 'PAIR_FOUND', { initiator: initiator }); 
-        sendMessageToClient(partner, 'PAIR_FOUND', { initiator: !initiator });
+        if (partner.readyState === WebSocket.OPEN && !pairs.has(partner)) {
+            pairs.set(ws, partner);
+            pairs.set(partner, ws);
+            
+            // Notify both clients of the connection AND tell them to start WebRTC
+            sendMessageToClient(ws, 'STATUS', 'Connected! Starting voice call.');
+            sendMessageToClient(partner, 'STATUS', 'Connected! Starting voice call.');
+            // Send the 'START_CALL' signal to the client that just joined, they will initiate the offer
+            sendMessageToClient(ws, 'START_CALL', 'You are the caller.'); 
+            console.log('New voice pair established.');
+            return;
+        }
         
-        console.log(`Paired two clients.`);
-        
-        // Start the 60-second timer for this new voice-only pair
-        const timer = setTimeout(() => {
-            enableVideoModeForPair(ws, partner);
-        }, VIDEO_ENABLE_DELAY_MS);
-        
-        videoTimers.set(ws, timer);
-        videoTimers.set(partner, timer);
-
+        attemptToPair(ws); 
     } else {
-        // 3. No one is waiting, so this client waits.
-        pendingUsers.push(ws);
-        sendMessageToClient(ws, 'STATUS', { message: `Searching for a stranger...` });
+        // No one is waiting, so this client waits.
+        waitingClients.push(ws);
+        sendMessageToClient(ws, 'STATUS', 'Waiting for a stranger to connect...');
+        console.log('Client waiting for a partner.');
     }
 }
 
 /**
  * Disconnects a client from their current partner and cleans up state.
  */
-function disconnectPair(ws, shouldRequeuePartner) {
-    const partner = pairedConnections.get(ws);
-    
-    // 1. TIMER CLEANUP: Clear any associated timer
-    const timer = videoTimers.get(ws);
-    if (timer) {
-        clearTimeout(timer);
-        videoTimers.delete(ws);
-        if (partner) videoTimers.delete(partner);
-    }
-    
-    // 2. Partner cleanup
-    if (partner) {
-        sendMessageToClient(partner, 'DISCONNECTED', { message: 'Your partner disconnected.' });
-        
-        pairedConnections.delete(ws);
-        pairedConnections.delete(partner);
-        
-        if (shouldRequeuePartner && partner.readyState === partner.OPEN) {
-            // Requeue partner for a new match
-            console.log("Partner is being re-queued.");
-            attemptToPair(partner); 
-        }
-    }
+function disconnectPair(ws) {
+    const partner = pairs.get(ws);
 
-    // 3. Cleanup from pending queue (in case they were waiting)
-    const pendingIndex = pendingUsers.findIndex(user => user === ws);
-    if (pendingIndex > -1) {
-        pendingUsers.splice(pendingIndex, 1);
+    if (partner) {
+        // 1. Notify the partner to close their PeerConnection
+        sendMessageToClient(partner, 'DISCONNECTED', 'Your partner disconnected. Click Connect to find a new stranger.');
+        
+        // 2. Clear both entries from the pairs map
+        pairs.delete(ws);
+        pairs.delete(partner);
+        console.log('Pair disconnected.');
     }
+}
+
+/**
+ * Handles cleanup when a client completely closes their socket.
+ */
+function cleanupClient(ws) {
+    // 1. Remove from waiting list if they were waiting
+    const index = waitingClients.indexOf(ws);
+    if (index !== -1) {
+        waitingClients.splice(index, 1);
+        console.log('Removed client from waiting list.');
+    }
+    
+    // 2. Disconnect from partner if they were paired (and notify partner)
+    disconnectPair(ws);
 }
 
 // WebSocket connection handler
 wss.on('connection', function connection(ws) {
-    sendMessageToClient(ws, 'STATUS', { message: 'Press Connect to start.' });
+    console.log('New client connected.');
+    
+    // Send welcome message and wait for the client to click 'Connect'.
+    sendMessageToClient(ws, 'STATUS', 'Welcome! Click Connect to find a stranger.');
 
+    // Handle messages from client
     ws.on('message', function incoming(message) {
         let data;
         try {
             data = JSON.parse(message);
         } catch (e) {
-            console.error("Invalid JSON received:", message);
-            return;
+            return; // Ignore invalid JSON
         }
 
+        const partner = pairs.get(ws);
+
         switch (data.type) {
-            case 'SIGNAL':
-                const partner = pairedConnections.get(ws);
-                if (partner) {
-                    sendMessageToClient(partner, 'SIGNAL', { signal: data.signal });
-                }
+            case 'CONNECT':
+                cleanupClient(ws);
+                attemptToPair(ws);
                 break;
 
             case 'DISCONNECT':
-                // Client initiated a manual disconnect
-                disconnectPair(ws, false); 
+                disconnectPair(ws);
+                sendMessageToClient(ws, 'STATUS', 'You disconnected. Click Connect to find a new stranger.');
+                break;
+                
+            // ----------------------------------------------------------------
+            // WebRTC Signaling Handlers
+            // ----------------------------------------------------------------
+            case 'OFFER':
+            case 'ANSWER':
+            case 'CANDIDATE':
+                if (partner) {
+                    // Forward the WebRTC signal directly to the partner
+                    sendMessageToClient(partner, data.type, data);
+                } else {
+                    console.warn(`Received ${data.type} but no partner found.`);
+                }
                 break;
 
-            case 'CONNECT':
-                // A new connection attempt is made (e.g., "Find New Stranger")
-                // 1. Clean up any existing pairing or queue state for this user
-                disconnectPair(ws, false); 
-                
-                // 2. Attempt to pair the user
-                attemptToPair(ws);
-                break;
+            default:
+                console.warn('Unknown message type received:', data.type);
         }
     });
 
+    // Handle client closing connection (browser tab closed, etc.)
     ws.on('close', function close() {
-        console.log("Client disconnected from websocket.");
-        // Client closed the tab/browser - requeue partner if they exist
-        disconnectPair(ws, true); 
+        console.log('Client disconnected.');
+        cleanupClient(ws);
     });
 
+    // Handle connection errors
     ws.on('error', (err) => {
-        console.error("WebSocket Error:", err.message);
-        // Client experienced an error - requeue partner if they exist
-        disconnectPair(ws, true); 
+        console.error('WebSocket error:', err.message);
+        cleanupClient(ws);
     });
 });
 
+// Start the HTTP/WebSocket server
 server.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on port ${PORT}`);
+    console.log(`WebSocket Server ready.`);
 });
