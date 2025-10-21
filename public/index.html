@@ -177,8 +177,8 @@
             <button id="videoButton" disabled>Video Chat 🤳</button>
         </div>
 
-        <video id="localVideo" autoplay muted></video>
-        <video id="remoteVideo" autoplay></video>
+        <video id="localVideo" autoplay muted playsinline></video>
+        <video id="remoteVideo" autoplay playsinline></video>
         <audio id="remoteAudio" autoplay></audio> 
 
         <div id="status">Press Connect to start.</div>
@@ -292,7 +292,6 @@
                 if (remaining <= 0) {
                     clearInterval(videoTimer); 
                     videoTimer = null;
-                    // Server will send ENABLE_VIDEO, no need to do anything here
                 }
             }, 1000);
         }
@@ -347,14 +346,12 @@
 
             peerConnection = new RTCPeerConnection(ICE_SERVERS);
             
-            // Add audio track
             localStream.getAudioTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-            // CRITICAL: Add a video transceiver from the start. It will be inactive for voice calls
-            // but is ready for the track to be added later without full renegotiation.
             videoTransceiver = peerConnection.addTransceiver('video', { direction: 'inactive' });
             
             peerConnection.ontrack = (event) => {
+                console.log("Received remote track:", event.track.kind);
                 const stream = event.streams[0];
                 if (event.track.kind === 'audio') {
                     remoteAudio.srcObject = stream;
@@ -373,9 +370,9 @@
             };
             
             peerConnection.onnegotiationneeded = async () => {
+                console.log("Negotiation needed...");
                 try {
-                    const offer = await peerConnection.createOffer();
-                    await peerConnection.setLocalDescription(offer);
+                    await peerConnection.setLocalDescription(await peerConnection.createOffer());
                     socket.send(JSON.stringify({
                         type: 'SIGNAL',
                         signal: { sdp: peerConnection.localDescription }
@@ -386,7 +383,6 @@
             };
 
             if (isInitiator) {
-                // Manually trigger negotiation for the initiator
                 peerConnection.onnegotiationneeded();
             }
         }
@@ -398,8 +394,7 @@
                 if (signal.sdp) {
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
                     if (signal.sdp.type === 'offer') {
-                        const answer = await peerConnection.createAnswer();
-                        await peerConnection.setLocalDescription(answer);
+                        await peerConnection.setLocalDescription(await peerConnection.createAnswer());
                         socket.send(JSON.stringify({
                             type: 'SIGNAL',
                             signal: { sdp: peerConnection.localDescription }
@@ -418,18 +413,17 @@
         function resetAllState() {
             closePeerConnection(); 
             stopLocalMedia(); 
-            updateUiForMode('voice'); // Reset UI to default voice mode
+            updateUiForMode('voice');
             setControls(false); 
             setStatus('Press Connect to start.');
         }
 
         function connectStranger() {
-            // If already connected, this button means "Find New Stranger"
             if (!disconnectButton.disabled) {
-                disconnectStranger(); // Disconnect current session first
+                disconnectStranger(); 
             }
             
-            setControls(false, true); // Disable buttons while connecting
+            setControls(false, true);
             setStatus('Connecting to server...');
 
             if (socket && socket.readyState === WebSocket.OPEN) {
@@ -451,13 +445,11 @@
         }
         
         async function startConnectRequest() {
-            // All connections start with audio only.
-            const mediaReady = await getLocalMedia(false);
+            const mediaReady = await getLocalMedia(false); // Always start with audio only
             if (mediaReady) {
                 socket.send(JSON.stringify({ type: 'CONNECT' }));
                 setStatus('Searching for a stranger...');
             } else {
-                // Media permission was denied.
                 if(socket) socket.close();
                 resetAllState();
             }
@@ -472,6 +464,7 @@
                     break;
                     
                 case 'PAIR_FOUND':
+                    console.log("Pair found! Initiator:", data.initiator);
                     setStatus('Voice chat connected! Video will enable in 60 seconds. 💬');
                     setControls(true);
                     startVideoTimer();
@@ -479,6 +472,7 @@
                     break;
 
                 case 'ENABLE_VIDEO':
+                    console.log("Received ENABLE_VIDEO signal from server.");
                     handleVideoUpgrade();
                     break;
 
@@ -493,30 +487,47 @@
             }
         }
 
+        // ==========================================================
+        // KEY FIX: This function is updated for robust video upgrade
+        // ==========================================================
         async function handleVideoUpgrade() {
-            setStatus('Video chat enabled! Say hello visually. 🤳');
+            setStatus('Enabling video... Please approve camera access.');
             clearVideoTimer();
 
-            // 1. Get new stream with video
             const videoReady = await getLocalMedia(true);
             if (!videoReady) {
-                disconnectStranger(); // Disconnect if user denies camera access
+                setStatus("Camera access denied. Disconnecting.", true);
+                disconnectStranger();
                 return;
             }
-
-            // 2. Update UI
+            
             updateUiForMode('video');
-            setControls(true); // Re-enable controls for video mode
+            setControls(true);
 
-            // 3. Replace track and renegotiate
             const videoTrack = localStream.getVideoTracks()[0];
             if (peerConnection && videoTransceiver && videoTrack) {
                 try {
-                    videoTransceiver.direction = "sendrecv"; // Activate the transceiver
+                    console.log("Replacing track and activating video transceiver.");
+                    videoTransceiver.direction = "sendrecv";
                     await videoTransceiver.sender.replaceTrack(videoTrack);
-                    // onnegotiationneeded will fire automatically to handle the rest
+                    
+                    // -- EXPLICIT RENEGOTIATION --
+                    // This forces the creation of a new offer with video enabled.
+                    console.log("Creating new offer for video upgrade...");
+                    const offer = await peerConnection.createOffer();
+                    await peerConnection.setLocalDescription(offer);
+                    
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({
+                            type: 'SIGNAL',
+                            signal: { sdp: peerConnection.localDescription }
+                        }));
+                        setStatus('Video chat connected! 🤳');
+                    }
                 } catch (e) {
                     console.error("Error upgrading to video:", e);
+                    setStatus("Failed to enable video.", true);
+                    disconnectStranger();
                 }
             }
         }
@@ -529,7 +540,6 @@
             resetAllState();
         }
         
-        // Initial setup on page load
         window.onload = () => {
             resetAllState();
         };
